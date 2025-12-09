@@ -1,6 +1,7 @@
 use bytemuck::{Pod, Zeroable};
-use glfw::{Action, Key};
 use glam;
+use glfw::{Action, Key};
+use wgpurenderer::geometry;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -185,7 +186,7 @@ impl State {
         let size = (size.0 as u32, size.1 as u32);
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
 
@@ -238,7 +239,7 @@ impl State {
         let num_indices = indices.len() as u32;
 
         // Create vertex buffer
-        
+
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertex Buffer"),
             size: (vertices.len() * std::mem::size_of::<Vertex>()) as u64,
@@ -521,7 +522,24 @@ impl State {
     }
 }
 
+// per instance
+struct UniformData {
+    metalic: f32,
+    roughness: f32,
+    ao: f32,
+    basecolor: [f32; 3],
+}
+
+// per frame
+struct CameraData {
+    position: [f32; 3],
+    view_projection: (),
+}
+
 fn main() {
+    // uniform_state.register_per_instance::< UniformData >();
+    // uniform_state.register_per_frame::< CameraData >();
+    // uniform_state.
     env_logger::init();
 
     let mut glfw = glfw::init(glfw::fail_on_errors).unwrap();
@@ -537,6 +555,9 @@ fn main() {
     window.set_framebuffer_size_polling(true);
     let context = window.render_context();
     let mut state = pollster::block_on(State::new(context));
+
+    // let geometry = geometry::Geometry::new();
+    // geometry.add_vertex_buffer( geometry::VertexBuffer::new(device, queue, slot, data, attributes, step_mode) );
 
     while !window.should_close() {
         glfw.poll_events();

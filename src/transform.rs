@@ -44,7 +44,7 @@ impl Transform {
     }
 
     fn is_invalid_normal_matrix(&self) -> bool {
-        self.normal_matrix.x_axis.y == 1.0
+        self.normal_matrix.x_axis.y.is_nan()
     }
 
     fn invalidate_model(&mut self) {
@@ -83,7 +83,7 @@ impl Transform {
 
     fn invalid_normal_matrix() -> Mat3 {
         let mut matrix = Mat3::ZERO;
-        matrix.x_axis.y = 1.0;
+        matrix.x_axis.y = f32::NAN;  // NaN гарантирует что это невалидная матрица
         matrix
     }
 }
