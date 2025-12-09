@@ -3,7 +3,7 @@ pub mod geometry;
 pub mod shader;
 pub mod transform;
 
-use std::any::TypeId;
+use std::{any::TypeId, cell::RefCell, rc::Rc};
 
 pub use camera::Camera;
 pub use transform::Transform;
@@ -44,52 +44,74 @@ impl Renderer {
     pub fn render(mesh: Mesh) {}
 }
 
-struct UniformRegister {
-    register: FastHashMap<TypeId, Vec<()>>,
+pub struct UniformRegister {
+    uniforms: FastHashMap<TypeId, UniformData>,
+    global_uniforms: FastHashMap<TypeId, (Vec<u32>, Vec<u8>)>,
 }
 
 impl UniformRegister {
-    pub fn new_uniform<T: bytemuck::NoUninit>(&mut self) -> () {
-        let t_name = std::any::type_name::<T>();
+    fn get_uniform_data<T: bytemuck::NoUninit>(&mut self) -> &mut UniformData {
         let t_id = std::any::TypeId::of::<T>();
-        let entry = self.register.entry(t_id);
-        let val = entry.or_default();
-        let size = size_of::<T>();
-        let align = align_of::<T>();
+        self.uniforms.entry(t_id).or_insert(UniformData::new::<T>())
+    }
+
+    pub fn upload_uniform<T: bytemuck::NoUninit>(&mut self, uniform: Uniform, val: &T) {
+        let entry = self.get_uniform_data::<T>();
+        let pos = entry.uniforms.iter().position(|item| item.0 == uniform.id);
+        let slice = bytemuck::bytes_of(val);
+        match pos {
+            Some(index) => {
+                entry.staging_buffer[index..entry.size].copy_from_slice(slice);
+            }
+            None => {
+                let pos = entry.staging_buffer.len();
+                entry.staging_buffer.extend_from_slice(slice);
+                entry.uniforms.push((uniform.id, pos));
+            }
+        }
     }
 }
 
 struct UniformData {
-    size : usize,
+    size: usize,
     align: usize,
     type_id: TypeId,
+    staging_buffer: Vec<u8>,
+    // TODO: should be ordered vec (order by id)
+    uniforms: Vec<(u32, usize)>,
 }
 
-struct Uniform< T > {
-    data: T
-}
-
-impl<T> Uniform< T > {
-    pub fn inner(&self) -> &T {
-        &self.data
+impl UniformData {
+    pub fn new<T: 'static>() -> Self {
+        Self {
+            size: size_of::<T>(),
+            align: align_of::<T>(),
+            type_id: TypeId::of::<T>(),
+            staging_buffer: vec![],
+            uniforms: vec![],
+        }
     }
+}
 
-    pub fn inner_mut(&mut self) -> &mut T {
-        &mut self.data
+pub struct Uniform {
+    id: u32,
+    uniform_register: Rc<RefCell<UniformRegister>>,
+}
+
+impl Uniform {
+    pub fn upload<T: bytemuck::NoUninit>(&self, data: T) {
+        //
     }
 }
 
 pub struct Object {
-    id : u32
-    // Arc Mutex Uniform register
+    id: u32, // Arc Mutex Uniform register
 }
 
 impl Object {
-    pub fn uniform_val< T >( &self, val : T ) {
+    pub fn uniform_val<T>(&self, val: T) {
         // writes val into uniform register
     }
 
-    pub fn uniform< T >( &self ) {
-
-    }
+    pub fn uniform<T>(&self) {}
 }
