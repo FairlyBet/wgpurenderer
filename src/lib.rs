@@ -70,6 +70,10 @@ impl UniformRegister {
             }
         }
     }
+
+    fn remove_uniform(&mut self, id: u32) {
+        //
+    }
 }
 
 struct UniformData {
@@ -104,14 +108,8 @@ impl Uniform {
     }
 }
 
-pub struct Object {
-    id: u32, // Arc Mutex Uniform register
-}
-
-impl Object {
-    pub fn uniform_val<T>(&self, val: T) {
-        // writes val into uniform register
+impl Drop for Uniform {
+    fn drop(&mut self) {
+        self.uniform_register.borrow_mut().remove_uniform(self.id);
     }
-
-    pub fn uniform<T>(&self) {}
 }
