@@ -186,7 +186,7 @@ impl State {
         let size = (size.0 as u32, size.1 as u32);
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN,
+            backends: wgpu::Backends::DX12,
             ..Default::default()
         });
 
@@ -214,6 +214,8 @@ impl State {
             .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
+        // Prefer non-sRGB format to avoid VK_IMAGE_USAGE_STORAGE_BIT validation errors
+        // sRGB formats often don't support storage on some GPUs
         let surface_format = surface_caps
             .formats
             .iter()

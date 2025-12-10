@@ -4,14 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-wgpu = "27.0.1"
-glfw = { version = "0.60.0", features = ["raw-window-handle-v0-6", "vulkan"] }
-pollster = "0.4.0"
-env_logger = "0.11.8"
-log = "0.4.28"
-raw-window-handle = "0.6.2"
+wgpu = "27.0"
+glfw = { version = "0.60", features = ["raw-window-handle-v0-6"] }
+pollster = "0.4"
+env_logger = "0.11"
+log = "0.4"
+raw-window-handle = "0.6"
 glam = { version = "0.29", features = ["bytemuck"] }
-bytemuck = { version = "1.21.0", features = ["derive"] }
-smallvec = "1.15.1"
+bytemuck = { version = "1.21", features = ["derive"] }
+smallvec = "1.15"
 sorted-vec = "0.8"
 nohash-hasher = "0.2"
