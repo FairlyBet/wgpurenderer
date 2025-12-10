@@ -6,6 +6,8 @@ type TypeIdHashMap<V> = HashMap<TypeIdKey, V, BuildNoHashHasher<TypeIdKey>>;
 
 type StagingBuffer = Vec<u8>;
 
+type InstanceCounter = Rc<Cell<u32>>;
+
 pub trait UniformData: bytemuck::NoUninit {}
 
 impl<T> UniformData for T where T: bytemuck::NoUninit {}
@@ -33,11 +35,6 @@ impl From<TypeId> for TypeIdKey {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct UniformRegistry {
-    inner: Rc<RefCell<UniformRegistryInner>>,
-}
-
 #[derive(Debug)]
 struct UniformRegistryInner {
     uniforms: TypeIdHashMap<UniformType>,
@@ -47,14 +44,17 @@ struct UniformRegistryInner {
 impl UniformRegistryInner {
     fn get_uniform_type<T: bytemuck::NoUninit>(&mut self) -> &mut UniformType {
         let key = TypeIdKey::new::<T>();
+
         self.uniforms
             .entry(key)
             .or_insert_with(|| UniformType::new::<T>())
     }
 
-    pub fn upload_uniform<T: bytemuck::NoUninit>(&mut self, uniform: &Uniform, val: &T) {
+    fn upload_uniform<T: bytemuck::NoUninit>(&mut self, uniform: &Uniform, val: &T) {
         let entry = self.get_uniform_type::<T>();
+
         let slice = bytemuck::bytes_of(val);
+
         match entry.find_by_id(uniform.id) {
             Ok(index) => {
                 let offset = entry.uniforms[index].offset;
@@ -82,6 +82,21 @@ impl UniformRegistryInner {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct UniformRegistry {
+    inner: Rc<RefCell<UniformRegistryInner>>,
+}
+
+impl UniformRegistry {
+    fn upload_uniform<T: bytemuck::NoUninit>(&self, uniform: &Uniform, val: &T) {
+        self.inner.borrow_mut().upload_uniform(uniform, val);
+    }
+
+    fn remove_uniform(&mut self, id: UniformId) {
+        self.inner.borrow_mut().remove_uniform(id);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct UniformEntry {
     id: UniformId,
@@ -105,16 +120,18 @@ struct UniformType {
     size: usize,
     align: usize,
     type_id: TypeId,
+    name: &'static str,
     staging_buffer: StagingBuffer,
     uniforms: SortedVec<UniformEntry>,
 }
 
 impl UniformType {
-    pub fn new<T: 'static>() -> Self {
+    fn new<T: 'static>() -> Self {
         Self {
             size: std::mem::size_of::<T>(),
             align: std::mem::align_of::<T>(),
             type_id: TypeId::of::<T>(),
+            name: std::any::type_name::<T>(),
             staging_buffer: vec![],
             uniforms: SortedVec::new(),
         }
@@ -128,23 +145,25 @@ impl UniformType {
 #[derive(Debug)]
 struct GlobalUniformType {
     uniforms: Vec<UniformId>,
-    buffer: StagingBuffer,
+    staging_buffer: StagingBuffer,
 }
 
 impl GlobalUniformType {
-    fn upload<T>(&mut self) {}
+    fn upload<T>(&mut self) {
+        //
+    }
 }
 
 #[derive(Debug)]
 pub struct Uniform {
     id: UniformId,
     uniform_register: UniformRegistry,
-    counter: Rc<Cell<usize>>,
+    counter: InstanceCounter,
 }
 
 impl Uniform {
-    pub fn upload<T: bytemuck::NoUninit>(&self, data: T) {
-        //
+    pub fn upload<T: bytemuck::NoUninit>(&self, val: &T) {
+        self.uniform_register.upload_uniform(self, val);
     }
 
     pub fn add_global_uniform<T: bytemuck::NoUninit>() {
@@ -169,10 +188,7 @@ impl Drop for Uniform {
         self.counter.update(|v| v - 1);
 
         if self.counter.get() == 0 {
-            self.uniform_register
-                .inner
-                .borrow_mut()
-                .remove_uniform(self.id);
+            self.uniform_register.remove_uniform(self.id);
         }
     }
 }
