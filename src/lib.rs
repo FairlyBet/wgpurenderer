@@ -1,10 +1,10 @@
 pub mod camera;
-pub mod geometry;
+// pub mod geometry;
 pub mod shader;
 pub mod transform;
-pub mod uniform;
-
-use crate::geometry::Geometry;
+pub mod ssbo;
+pub mod types;
+// use crate::geometry::Geometry;
 
 pub use camera::Camera;
 pub use transform::Transform;
@@ -25,22 +25,17 @@ pub struct RenderContext {
     queue: wgpu::Queue,
 }
 
-pub struct Mesh {
-    ctx: RenderContext,
-    geometry: Geometry,
-}
+// pub struct Mesh {
+//     ctx: RenderContext,
+//     geometry: Geometry,
+// }
 
-impl Mesh {
+// impl Mesh {
     // pub fn
-}
+// }
 
-pub struct ShaderSource {
-    src: Vec<Box<str>>,
-}
+// pub struct Renderer {}
 
-pub struct Renderer {}
-
-impl Renderer {
-    pub fn render(mesh: Mesh) {}
-}
-
+// impl Renderer {
+//     pub fn render(mesh: Mesh) {}
+// }

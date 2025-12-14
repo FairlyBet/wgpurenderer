@@ -49,6 +49,7 @@ fn foo( light_dir: vec3<f32> ) -> f32 {
         return 0.0;
     }
 }
+
 struct Uniforms {
     model: mat4x4<f32>,
     view: mat4x4<f32>,

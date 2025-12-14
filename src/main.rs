@@ -1,7 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use glam;
 use glfw::{Action, Key};
-use wgpurenderer::geometry;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -350,7 +349,8 @@ impl State {
         let (msaa_texture, msaa_view) = Self::create_msaa_texture(&device, &config, sample_count);
         let (depth_texture, depth_view) =
             Self::create_depth_texture(&device, &config, sample_count);
-
+        // println!("{}", device.limits().max_dynamic_uniform_buffers_per_pipeline_layout );
+        println!("{}", device.limits().min_storage_buffer_offset_alignment );
         Self {
             surface,
             device,
