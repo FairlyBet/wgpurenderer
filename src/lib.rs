@@ -23,6 +23,7 @@ pub struct RenderContext {
     instance: wgpu::Instance,
     device: wgpu::Device,
     queue: wgpu::Queue,
+    ssbo_pool: ssbo::SsboPool,
 }
 
 // pub struct Mesh {
