@@ -1,6 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use glam;
 use glfw::{Action, Key};
+use wgpurenderer::RenderContext;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -350,7 +351,7 @@ impl State {
         let (depth_texture, depth_view) =
             Self::create_depth_texture(&device, &config, sample_count);
         // println!("{}", device.limits().max_dynamic_uniform_buffers_per_pipeline_layout );
-        println!("{}", device.limits().min_storage_buffer_offset_alignment );
+        println!("{}", device.limits().min_storage_buffer_offset_alignment);
         Self {
             surface,
             device,
@@ -543,6 +544,23 @@ fn main() {
     // uniform_state.register_per_frame::< CameraData >();
     // uniform_state.
     env_logger::init();
+
+    let ctx = RenderContext::new();
+    let shader = ctx
+        .shader()
+        .source(include_str!("../shaders/shader.wgsl"))
+        .entries("vs_main", "fs_main")
+        .bindgroup(wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        })
+        .build();
 
     let mut glfw = glfw::init(glfw::fail_on_errors).unwrap();
 

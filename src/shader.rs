@@ -1,102 +1,35 @@
 // pub mod modules;
 
-use crate::{RenderContext, types::*};
-use smallvec::SmallVec;
+use crate::RenderContext;
+use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ShaderSource(Cow<'static, str>);
-
-impl ShaderSource {
-    pub fn src(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<&'static str> for ShaderSource {
-    fn from(value: &'static str) -> Self {
-        Self(value.into())
-    }
-}
-
-impl From<String> for ShaderSource {
-    fn from(value: String) -> Self {
-        Self(value.into())
-    }
-}
-
-pub struct ShaderTemplate {
-    shader_module: wgpu::ShaderModule,
-    per_frame_bindgroup: wgpu::BindGroup,
-    // internal bindgroup
-    // dynamic bindgroup
-}
-
-impl ShaderTemplate {
-    pub fn create_dynamic_bindgroup() {}
-
-    // Builder methods
-    // add description for these
-    fn dynamic_ssbo() {}
-    fn dynamic_ubo() {}
-    fn dynamic_texture() {}
-    fn dynamic_push_constants() {}
-
-    // value
-    fn ssbo() {}
-    // value
-    fn ubo() {}
-    // value
-    fn texture() {}
-    // should accept push constant description
-    fn object_data<T: bytemuck::NoUninit>() {}
-    // should accept push constant description
-    fn uniform_data<T: bytemuck::NoUninit>() {}
-}
-
-pub struct ShaderBuilder<'a> {
-    // TODO: check for duplicates
-    object_data: Vec<(TypeId, u32)>,
-    uniform_data: Vec<(TypeId, u32)>,
-    binding_resources: Vec<(&'a dyn Binding, u32)>,
-    vertex_entry: Cow<'static, str>,   // TODO: replace with small_str
-    fragment_entry: Cow<'static, str>, // TODO: replace with small_str
-    source: SmallVec<[ShaderSource; 1]>,
+pub struct ShaderBuilder {
+    bindgroup: Vec<wgpu::BindGroupLayoutEntry>,
+    vertex_entry: Cow<'static, str>,
+    fragment_entry: Cow<'static, str>,
+    source: SmallVec<[Cow<'static, str>; 1]>,
     ctx: RenderContext,
 }
 
-impl<'a> ShaderBuilder<'a> {
-    pub fn object_data<T: bytemuck::NoUninit>(
-        mut self,
-        binding: u32,
-        visibility: wgpu::ShaderStages,
-    ) -> Self {
-        self.object_data.push((TypeId::new::<T>(), binding));
+impl ShaderBuilder {
+    pub(crate) fn new(ctx: &RenderContext) -> Self {
+        Self {
+            bindgroup: vec![],
+            vertex_entry: "".into(),
+            fragment_entry: "".into(),
+            source: smallvec![],
+            ctx: ctx.clone(),
+        }
+    }
+
+    pub fn bindgroup(mut self, entry: wgpu::BindGroupLayoutEntry) -> Self {
+        self.bindgroup.push(entry);
         self
     }
 
-    pub fn uniform_data<T: bytemuck::NoUninit>(
-        mut self,
-        binding: u32,
-        visibility: wgpu::ShaderStages,
-    ) -> Self {
-        self.uniform_data.push((TypeId::new::<T>(), binding));
-        self
-    }
-
-    pub fn binding_resource(
-        mut self,
-        binding_resource: &'a dyn Binding,
-        binding: u32,
-        visibility: wgpu::ShaderStages,
-        r#type: wgpu::BindingType,
-    ) -> Self {
-        self.binding_resources.push((binding_resource, binding));
-        self
-    }
-
-    pub fn source(mut self, source: ShaderSource) -> Self {
-        self.source.push(source);
+    pub fn source(mut self, source: impl Into<Cow<'static, str>>) -> Self {
+        self.source.push(source.into());
         self
     }
 
@@ -110,32 +43,27 @@ impl<'a> ShaderBuilder<'a> {
         self
     }
 
-    pub fn build(self) -> ShaderTemplate {
-        let layout = self
+    pub fn build(self) -> Shader {
+        let source: String = self.source.iter().map(|v| v.chars()).flatten().collect();
+
+        let shader_module = self
             .ctx
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            .device()
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                entries: &[],
+                source: wgpu::ShaderSource::Wgsl(source.into()),
             });
-        // create bind group for 0 group
-        todo!()
+
+        Shader {
+            shader_module,
+            bindgroup: self.bindgroup,
+        }
     }
 }
 
 pub struct Shader {
-    // rc for Shader Template
-    // id
-    //
-}
-
-impl Shader {
-    // Provide actual values
-    // Also during build
-    fn dynamic_ssbo() {}
-    fn dynamic_ubo() {}
-    fn dynamic_texture() {}
-    fn dynamic_push_constants() {}
+    shader_module: wgpu::ShaderModule,
+    bindgroup: Vec<wgpu::BindGroupLayoutEntry>,
 }
 
 // TODO: make sealed
