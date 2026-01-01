@@ -59,8 +59,8 @@ pub struct ShaderBuilder<'a> {
     object_data: Vec<(TypeId, u32)>,
     uniform_data: Vec<(TypeId, u32)>,
     binding_resources: Vec<(&'a dyn Binding, u32)>,
-    vertex_entry: Box<str>,   // TODO: replace with small_str
-    fragment_entry: Box<str>, // TODO: replace with small_str
+    vertex_entry: Cow<'static, str>,   // TODO: replace with small_str
+    fragment_entry: Cow<'static, str>, // TODO: replace with small_str
     source: SmallVec<[ShaderSource; 1]>,
     ctx: RenderContext,
 }
@@ -100,7 +100,11 @@ impl<'a> ShaderBuilder<'a> {
         self
     }
 
-    pub fn entries(mut self, vertex_entry: &str, fragment_entry: &str) -> Self {
+    pub fn entries(
+        mut self,
+        vertex_entry: impl Into<Cow<'static, str>>,
+        fragment_entry: impl Into<Cow<'static, str>>,
+    ) -> Self {
         self.vertex_entry = vertex_entry.into();
         self.fragment_entry = fragment_entry.into();
         self
