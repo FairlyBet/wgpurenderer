@@ -9,7 +9,10 @@ pub mod types;
 pub use camera::Camera;
 pub use transform::Transform;
 
-use crate::shader::ShaderBuilder;
+use crate::{
+    shader::{BindGroupBuilder, BindGroupLayoutBuilder, BindGroupPool, ShaderBuilder},
+    ssbo::SsboPool,
+};
 
 pub struct Scene {
     nodes: Vec<Node>,
@@ -20,14 +23,14 @@ pub struct Node {
 }
 
 #[derive(Debug, Clone)]
-pub struct RenderContext {
+pub struct Context {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
 }
 
-impl RenderContext {
+impl Context {
     pub fn new() -> Self {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::DX12,
@@ -78,8 +81,33 @@ impl RenderContext {
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct Renderer {
+    ctx: Context,
+    bind_group_pool: BindGroupPool,
+    ssbo_pool: SsboPool,
+}
+
+impl Renderer {
+    pub fn new() -> Self {
+        Self {
+            ctx: Context::new(),
+            bind_group_pool: BindGroupPool::new(),
+            ssbo_pool: SsboPool::new(),
+        }
+    }
 
     pub fn shader(&self) -> ShaderBuilder {
-        ShaderBuilder::new(self)
+        ShaderBuilder::new(&self.ctx)
+    }
+
+    pub fn bindgroup_layout(&self) -> BindGroupLayoutBuilder {
+        BindGroupLayoutBuilder::new(&self.ctx)
+    }
+
+    pub fn bindgroup(&self, layout: wgpu::BindGroupLayout) -> BindGroupBuilder<'_> {
+        BindGroupBuilder::new(&self, layout)
     }
 }

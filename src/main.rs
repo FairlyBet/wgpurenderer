@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use glam;
 use glfw::{Action, Key};
-use wgpurenderer::RenderContext;
+use wgpurenderer::{Context, Renderer};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -545,21 +545,26 @@ fn main() {
     // uniform_state.
     env_logger::init();
 
-    let ctx = RenderContext::new();
-    let shader = ctx
-        .shader()
-        .source(include_str!("../shaders/shader.wgsl"))
-        .entries("vs_main", "fs_main")
-        .bindgroup(wgpu::BindGroupLayoutEntry {
+    let ctx = Renderer::new();
+    let bindgroup_layout = ctx
+        .bindgroup_layout()
+        .entry(wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
             ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
                 has_dynamic_offset: false,
                 min_binding_size: None,
             },
             count: None,
         })
+        .build();
+
+    let shader = ctx
+        .shader()
+        .source(include_str!("../shaders/shader.wgsl"))
+        .entries("vs_main", "fs_main")
+        .bindgroup(bindgroup_layout)
         .build();
 
     let mut glfw = glfw::init(glfw::fail_on_errors).unwrap();
