@@ -564,7 +564,7 @@ fn main() {
         .shader()
         .source(include_str!("../shaders/shader.wgsl"))
         .entries("vs_main", "fs_main")
-        .bindgroup(bindgroup_layout)
+        .bind_group_layout(bindgroup_layout)
         .build();
 
     let mut glfw = glfw::init(glfw::fail_on_errors).unwrap();

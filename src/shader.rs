@@ -1,7 +1,7 @@
 // pub mod modules;
 
 use crate::{Context, Renderer, types};
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
@@ -9,7 +9,7 @@ use std::{
 };
 
 pub struct ShaderBuilder {
-    bindgroup_layouts: Vec<wgpu::BindGroupLayout>,
+    bind_group_layouts: SmallVec<[wgpu::BindGroupLayout; 2]>,
     vertex_entry: Cow<'static, str>,
     fragment_entry: Cow<'static, str>,
     source: SmallVec<[Cow<'static, str>; 1]>,
@@ -19,16 +19,16 @@ pub struct ShaderBuilder {
 impl ShaderBuilder {
     pub(crate) fn new(ctx: &Context) -> Self {
         Self {
-            bindgroup_layouts: vec![],
+            bind_group_layouts: smallvec::smallvec![],
             vertex_entry: "".into(),
             fragment_entry: "".into(),
-            source: smallvec![],
+            source: smallvec::smallvec![],
             ctx: ctx.clone(),
         }
     }
 
-    pub fn bindgroup(mut self, value: wgpu::BindGroupLayout) -> Self {
-        self.bindgroup_layouts.push(value);
+    pub fn bind_group_layout(mut self, value: wgpu::BindGroupLayout) -> Self {
+        self.bind_group_layouts.push(value);
         self
     }
 
@@ -60,17 +60,22 @@ impl ShaderBuilder {
 
         Shader {
             shader_module,
-            bindgroup: self.bindgroup_layouts,
+            bind_group_layouts: self.bind_group_layouts,
         }
     }
 }
 
 pub struct Shader {
     shader_module: wgpu::ShaderModule,
-    bindgroup: Vec<wgpu::BindGroupLayout>,
+    bind_group_layouts: SmallVec<[wgpu::BindGroupLayout; 2]>,
 }
 
-// TODO: make sealed
+impl Shader {
+    pub fn bind_group_layout(&self, n: usize) -> &wgpu::BindGroupLayout {
+        &self.bind_group_layouts[n]
+    }
+}
+
 pub trait BindingResource {
     fn as_binding(&self) -> wgpu::BindingResource<'_>;
 }
@@ -193,6 +198,7 @@ impl BindGroupPoolInner {
 pub struct BindGroupPool {
     inner: Rc<RefCell<BindGroupPoolInner>>,
 }
+
 impl BindGroupPool {
     pub fn new() -> Self {
         Self {
