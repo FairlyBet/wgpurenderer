@@ -111,3 +111,14 @@ impl Renderer {
         BindGroupBuilder::new(&self, layout)
     }
 }
+
+struct RenderTarget {
+    // ...
+}
+
+struct Obj {
+    bindgroups: smallvec::SmallVec<[wgpu::BindGroup; 2]>,
+    shader: shader::Shader,
+    geometry: (),
+    push_constants: (),
+}

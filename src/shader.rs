@@ -5,6 +5,7 @@ use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
+    fmt::Debug,
     rc::Rc,
 };
 
@@ -65,6 +66,7 @@ impl ShaderBuilder {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Shader {
     shader_module: wgpu::ShaderModule,
     bind_group_layouts: SmallVec<[wgpu::BindGroupLayout; 2]>,
@@ -203,6 +205,53 @@ impl BindGroupPool {
     pub fn new() -> Self {
         Self {
             inner: Rc::new(RefCell::new(BindGroupPoolInner::default())),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CollectionInner<T> {
+    data: Vec<T>,
+    id_pool: types::IdPool,
+}
+
+impl<T> CollectionInner<T> {}
+
+#[derive(Debug)]
+struct Collection<T> {
+    inner: Rc<RefCell<CollectionInner<T>>>,
+}
+
+impl<T> Clone for Collection<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+pub struct Managed<T> {
+    instance_counter: types::InstanceCounter,
+    instance_id: types::InstanceId,
+    collection: Collection<T>,
+}
+
+impl<T> Clone for Managed<T> {
+    fn clone(&self) -> Self {
+        self.instance_counter.increment();
+        Self {
+            instance_counter: self.instance_counter.clone(),
+            instance_id: self.instance_id.clone(),
+            collection: self.collection.clone(),
+        }
+    }
+}
+
+impl<T> Drop for Managed<T> {
+    fn drop(&mut self) {
+        self.instance_counter.decrement();
+        if self.instance_counter.value() == 0 {
+            // release
         }
     }
 }

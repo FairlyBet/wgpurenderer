@@ -5,7 +5,26 @@ pub type TypeIdMap<V> = IntMap<TypeId, V>;
 
 pub type StagingBuffer = Vec<u8>;
 
-pub type InstanceCounter = Rc<Cell<u32>>;
+#[derive(Debug, Clone)]
+pub struct InstanceCounter(Rc<Cell<u32>>);
+
+impl InstanceCounter {
+    pub fn new() -> Self {
+        Self(Rc::new(Cell::new(1)))
+    }
+
+    pub fn increment(&self) {
+        self.0.update(|v| v + 1);
+    }
+
+    pub fn decrement(&self) {
+        self.0.update(|v| v - 1);
+    }
+
+    pub fn value(&self) -> u32 {
+        self.0.get()
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstanceId(u32);
