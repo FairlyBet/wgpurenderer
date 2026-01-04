@@ -1,7 +1,7 @@
 pub mod camera;
 // pub mod geometry;
 pub mod shader;
-pub mod ssbo;
+// pub mod ssbo;
 pub mod transform;
 pub mod types;
 // use crate::geometry::Geometry;
@@ -9,10 +9,7 @@ pub mod types;
 pub use camera::Camera;
 pub use transform::Transform;
 
-use crate::{
-    shader::{BindGroupBuilder, BindGroupLayoutBuilder, BindGroupPool, ShaderBuilder},
-    ssbo::SsboPool,
-};
+use crate::shader::{BindGroupBuilder, BindGroupLayoutBuilder, Managed, ShaderBuilder};
 
 pub struct Scene {
     nodes: Vec<Node>,
@@ -86,16 +83,16 @@ impl Context {
 #[derive(Debug, Clone)]
 pub struct Renderer {
     ctx: Context,
-    bind_group_pool: BindGroupPool,
-    ssbo_pool: SsboPool,
+    // bind_group_pool: BindGroupPool,
+    // ssbo_pool: SsboPool,
 }
 
 impl Renderer {
     pub fn new() -> Self {
         Self {
             ctx: Context::new(),
-            bind_group_pool: BindGroupPool::new(),
-            ssbo_pool: SsboPool::new(),
+            // bind_group_pool: BindGroupPool::new(),
+            // ssbo_pool: SsboPool::new(),
         }
     }
 
@@ -116,9 +113,13 @@ struct RenderTarget {
     // ...
 }
 
-struct Obj {
-    bindgroups: smallvec::SmallVec<[wgpu::BindGroup; 2]>,
-    shader: shader::Shader,
-    geometry: (),
-    push_constants: (),
+struct ObjectInner {
+    bindgroups: smallvec::SmallVec<[Managed<wgpu::BindGroup>; 2]>,
+    shader: Managed<shader::Shader>,
+    geometry: Managed<()>,
+    push_constants: Managed<()>,
+}
+
+struct Object {
+    inner: Managed<ObjectInner>,
 }
