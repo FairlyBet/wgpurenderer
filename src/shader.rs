@@ -321,11 +321,12 @@ impl<T> Drop for Managed<T> {
 }
 
 struct PushConstantBuffer {
+    
     buffer: Vec<u8>,
 }
 
 struct PushConstant(Range<usize>);
 
 fn foo(p: Managed<PushConstant>) {
-    
+        
 }
