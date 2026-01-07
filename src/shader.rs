@@ -266,7 +266,7 @@ impl<T: Clone> CollectionInner<T> {
 }
 
 #[derive(Debug)]
-struct Collection<T> {
+pub struct Collection<T> {
     inner: Rc<RefCell<CollectionInner<T>>>,
 }
 
@@ -294,24 +294,36 @@ impl<T> Clone for Collection<T> {
     }
 }
 
-pub struct Managed<T> {
-    instance_counter: types::InstanceCounter,
-    instance_id: types::InstanceId,
-    collection: Collection<T>,
+impl<T> CollectionOps for Collection<T> {
+    fn delete(&self, id: types::InstanceId) {
+        self.delete(id);
+    }
 }
 
-impl<T> Clone for Managed<T> {
+pub trait CollectionOps {
+    fn delete(&self, id: types::InstanceId);
+}
+
+pub type Managed<T> = ManagedEntry<Collection<T>>;
+
+pub struct ManagedEntry<C: CollectionOps> {
+    instance_counter: types::InstanceCounter,
+    instance_id: types::InstanceId,
+    collection: C,
+}
+
+impl<T: CollectionOps> Clone for ManagedEntry<Collection<T>> {
     fn clone(&self) -> Self {
         self.instance_counter.increment();
         Self {
             instance_counter: self.instance_counter.clone(),
-            instance_id: self.instance_id.clone(),
+            instance_id: self.instance_id,
             collection: self.collection.clone(),
         }
     }
 }
 
-impl<T> Drop for Managed<T> {
+impl<T: CollectionOps> Drop for ManagedEntry<T> {
     fn drop(&mut self) {
         self.instance_counter.decrement();
         if self.instance_counter.value() == 0 {
@@ -320,13 +332,36 @@ impl<T> Drop for Managed<T> {
     }
 }
 
-struct PushConstantBuffer {
-    
+impl Managed<PushConstant> {
+    pub fn upload(&self, offset: usize) {
+        let item = self
+            .collection
+            .inner
+            .borrow_mut()
+            .data
+            .binary_search_by_key(&self.instance_id, |item| item.id)
+            .unwrap();
+    }
+}
+
+struct PushConstantBufferInner {
     buffer: Vec<u8>,
+    entries: Vec<(types::InstanceId, Range<usize>)>,
+    id_pool: types::IdPool,
 }
 
-struct PushConstant(Range<usize>);
-
-fn foo(p: Managed<PushConstant>) {
-        
+pub struct PushConstantBuffer {
+    inner: Rc<RefCell<PushConstantBufferInner>>,
 }
+
+impl CollectionOps for PushConstantBuffer {
+    fn delete(&self, id: types::InstanceId) {
+        todo!()
+    }
+}
+
+pub struct PushConstant(Range<usize>);
+
+pub type PC = ManagedEntry<PushConstantBuffer>;
+
+fn foo(p: PC) {}

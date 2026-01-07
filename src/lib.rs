@@ -9,7 +9,9 @@ pub mod types;
 pub use camera::Camera;
 pub use transform::Transform;
 
-use crate::shader::{BindGroupBuilder, BindGroupLayoutBuilder, Managed, ShaderBuilder};
+use crate::shader::{
+    BindGroupBuilder, BindGroupLayoutBuilder, Managed, ManagedEntry, ShaderBuilder,
+};
 
 pub struct Scene {
     nodes: Vec<Node>,
