@@ -111,33 +111,63 @@ impl Renderer {
 pub struct DrawCall {
     geometry: Geometry,
     shader: Shader,
-    params: Params,
 }
 
 #[derive(Debug, Clone)]
 pub struct Geometry {
     index_buffer: Option<wgpu::Buffer>,
     buffers: Vec<wgpu::Buffer>,
+    instance_count: u32,
+    vertex_count: u32,
 }
 
 #[derive(Debug, Clone)]
 pub struct Shader {
     shader_module: wgpu::ShaderModule,
-    bind_groupes: Vec<wgpu::BindGroup>,
-    immediates: Vec<u8>,
+    shader_descriptor: ShaderDescriptor,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Params {
-    blend: Option<wgpu::BlendState>,
-    write_mask: wgpu::ColorWrites,
-    cull_mode: Option<wgpu::Face>,
-    polygon_mode: wgpu::PolygonMode,
-    unclipped_depth: bool,
-    depth_format: wgpu::TextureFormat,
-    depth_write_enabled: bool,
-    depth_compare: wgpu::CompareFunction,
+#[derive(Debug, Clone)]
+pub struct ShaderDescriptor {
+    veretex: Vertex,
+    fragment: Vec<Fragment>,
+    depth_stencil: DepthStencil,
+    topology: Topology,
     multisample_count: u32,
     multisample_mask: u64,
     alpha_to_coverage_enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+struct Vertex {
+    buffers: Vec<wgpu::VertexBufferLayout<'static>>,
+}
+
+#[derive(Debug, Clone)]
+struct Fragment {
+    format: wgpu::TextureFormat,
+    blend: Option<wgpu::BlendState>,
+    write_mask: wgpu::ColorWrites,
+}
+
+#[derive(Debug, Clone)]
+struct DepthStencil {
+    depth_format: wgpu::TextureFormat,
+    depth_write_enabled: bool,
+    depth_compare: wgpu::CompareFunction,
+    stencil: wgpu::StencilState,
+    unclipped_depth: bool,
+}
+
+#[derive(Debug, Clone)]
+struct Topology {
+    topology: wgpu::PrimitiveTopology,
+    polygon_mode: wgpu::PolygonMode,
+    front_face: wgpu::FrontFace,
+    cull_mode: Option<wgpu::Face>,
+}
+
+struct ShaderData {
+    immediates: Vec<u8>,
+    bind_groups: Vec<wgpu::BindGroup>,
 }
