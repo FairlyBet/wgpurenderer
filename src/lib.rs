@@ -8,6 +8,7 @@ pub mod types;
 
 pub use camera::Camera;
 pub use transform::Transform;
+use wgpu::{DeviceDescriptor, ExperimentalFeatures, Features, Limits};
 
 use crate::shader::{
     BindGroupBuilder, BindGroupLayoutBuilder, Managed, ManagedEntry, ShaderBuilder,
@@ -43,17 +44,13 @@ impl Context {
         });
         let adapter = pollster::block_on(adapter).unwrap();
 
-        let device_queue = adapter.request_device(&wgpu::DeviceDescriptor {
+        let device_queue = adapter.request_device(&DeviceDescriptor {
             label: None,
-            required_features: wgpu::Features {
-                features_wgpu: wgpu::FeaturesWGPU::PUSH_CONSTANTS,
-                features_webgpu: wgpu::FeaturesWebGPU::empty(),
-            },
-            required_limits: wgpu::Limits {
-                max_push_constant_size: 128,
-                ..Default::default()
-            },
-            ..Default::default()
+            required_features: Features::IMMEDIATES,
+            required_limits: Limits::defaults(),
+            experimental_features: ExperimentalFeatures::disabled(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
         });
         let (device, queue) = pollster::block_on(device_queue).unwrap();
 
@@ -111,17 +108,36 @@ impl Renderer {
     }
 }
 
-struct RenderTarget {
-    // ...
+pub struct DrawCall {
+    geometry: Geometry,
+    shader: Shader,
+    params: Params,
 }
 
-struct ObjectInner {
-    bindgroups: smallvec::SmallVec<[Managed<wgpu::BindGroup>; 2]>,
-    shader: Managed<shader::Shader>,
-    geometry: Managed<()>,
-    push_constants: Managed<()>,
+#[derive(Debug, Clone)]
+pub struct Geometry {
+    index_buffer: Option<wgpu::Buffer>,
+    buffers: Vec<wgpu::Buffer>,
 }
 
-struct Object {
-    inner: Managed<ObjectInner>,
+#[derive(Debug, Clone)]
+pub struct Shader {
+    shader_module: wgpu::ShaderModule,
+    bind_groupes: Vec<wgpu::BindGroup>,
+    immediates: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Params {
+    blend: Option<wgpu::BlendState>,
+    write_mask: wgpu::ColorWrites,
+    cull_mode: Option<wgpu::Face>,
+    polygon_mode: wgpu::PolygonMode,
+    unclipped_depth: bool,
+    depth_format: wgpu::TextureFormat,
+    depth_write_enabled: bool,
+    depth_compare: wgpu::CompareFunction,
+    multisample_count: u32,
+    multisample_mask: u64,
+    alpha_to_coverage_enabled: bool,
 }
