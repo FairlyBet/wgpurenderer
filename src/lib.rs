@@ -169,5 +169,5 @@ struct Topology {
 
 struct ShaderData {
     immediates: Vec<u8>,
-    bind_groups: Vec<wgpu::BindGroup>,
+    bind_groups: Vec<wgpu::BindGroup>, // should have id
 }
