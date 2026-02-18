@@ -471,6 +471,7 @@ impl State {
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+        let r = ..;
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
@@ -546,28 +547,6 @@ fn main() {
     // uniform_state.register_per_frame::< CameraData >();
     // uniform_state.
     env_logger::init();
-
-    let ctx = Renderer::new();
-    let bindgroup_layout = ctx
-        .bindgroup_layout()
-        .entry(wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        })
-        .build();
-
-    let shader = ctx
-        .shader()
-        .source(include_str!("../shaders/shader.wgsl"))
-        .entries("vs_main", "fs_main")
-        .bind_group_layout(bindgroup_layout)
-        .build();
 
     let mut glfw = glfw::init(glfw::fail_on_errors).unwrap();
 
