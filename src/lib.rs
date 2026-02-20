@@ -1,6 +1,6 @@
 pub mod camera;
 pub mod transform;
-pub mod types;
+pub mod utils;
 
 pub use camera::Camera;
 use rustc_hash::FxHashMap;
@@ -96,6 +96,58 @@ impl Renderer {
             bind_group_layout_cache: Vec::new(),
         }
     }
+
+    pub fn create_material(
+        &mut self,
+        material_description: &MaterialDescription,
+    ) -> Handle<wgpu::RenderPipeline> {
+        let cached = self
+            .bind_group_layout_cache
+            .iter()
+            .find(|item| item.0 == material_description.bind_groups);
+
+        let layout = match cached {
+            Some(l) => l.1.clone(),
+            None => {
+                let bind_group_layout =
+                    self.ctx
+                        .device
+                        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                            label: None,
+                            entries: &material_description.bind_groups,
+                        });
+                self.bind_group_layout_cache.push((
+                    material_description.bind_groups.clone(),
+                    bind_group_layout.clone(),
+                ));
+                bind_group_layout
+            }
+        };
+
+        let render_pipeline_layout =
+            self.ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&layout],
+                immediate_size: 128
+            });
+
+        // let desc = wgpu::RenderPipelineDescriptor {
+
+            // label: None,
+            // layout: (),
+            // vertex: (),
+            // primitive: (),
+            // depth_stencil: (),
+            // multisample: (),
+            // fragment: (),
+            // multiview_mask: (),
+            // cache: (),
+        // };
+
+        // self.ctx.device.create_render_pipeline()
+
+        todo!()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -111,12 +163,13 @@ pub struct Geometry {
     index_buffer: Option<wgpu::Buffer>,
     buffers: Vec<(wgpu::Buffer, Option<Range<u64>>)>,
     vertex_count: u32,
+    index_count: u32,
     index_format: wgpu::IndexFormat,
 }
 
-#[derive(Debug, Clone)]
-pub struct ShaderDescriptor {
-    bind_group_layout: Vec<wgpu::BindGroupLayoutEntry>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaterialDescription {
+    bind_groups: Vec<Vec<wgpu::BindGroupLayoutEntry>>,
     veretex: Vertex,
     fragment: Vec<Fragment>,
     depth_stencil: DepthStencil,
@@ -127,19 +180,19 @@ pub struct ShaderDescriptor {
     source: Box<str>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Vertex {
     buffers: Vec<wgpu::VertexBufferLayout<'static>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fragment {
     format: wgpu::TextureFormat,
     blend: Option<wgpu::BlendState>,
     write_mask: wgpu::ColorWrites,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DepthStencil {
     depth_format: wgpu::TextureFormat,
     depth_write_enabled: bool,
@@ -148,7 +201,7 @@ pub struct DepthStencil {
     unclipped_depth: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Topology {
     topology: wgpu::PrimitiveTopology,
     polygon_mode: wgpu::PolygonMode,
@@ -167,7 +220,7 @@ pub struct ShaderData {
 #[derive(Debug)]
 struct Entry<T> {
     val: T,
-    id: types::InstanceId,
+    id: utils::InstanceId,
 }
 
 impl<T> PartialEq for Entry<T> {
@@ -193,25 +246,25 @@ impl<T> Ord for Entry<T> {
 #[derive(Debug)]
 struct StorageInner<T> {
     data: SortedVec<Entry<T>>,
-    id_pool: types::IdPool,
+    id_pool: utils::IdPool,
 }
 
 impl<T> StorageInner<T> {
     fn new() -> Self {
         Self {
             data: SortedVec::new(),
-            id_pool: types::IdPool::new(),
+            id_pool: utils::IdPool::new(),
         }
     }
 
-    fn insert(&mut self, val: T) -> types::InstanceId {
+    fn insert(&mut self, val: T) -> utils::InstanceId {
         let id = self.id_pool.get_next();
         let entry = Entry { val, id };
         self.data.push(entry);
         id
     }
 
-    fn delete(&mut self, id: types::InstanceId) {
+    fn delete(&mut self, id: utils::InstanceId) {
         self.id_pool.free(id);
         let index = self
             .data
@@ -233,11 +286,11 @@ impl<T> Storage<T> {
         }
     }
 
-    fn create(&self, val: T) -> types::InstanceId {
+    fn create(&self, val: T) -> utils::InstanceId {
         self.inner.borrow_mut().insert(val)
     }
 
-    fn delete(&self, id: types::InstanceId) {
+    fn delete(&self, id: utils::InstanceId) {
         self.inner.borrow_mut().delete(id);
     }
 }
@@ -252,10 +305,18 @@ impl<T> Clone for Storage<T> {
 
 #[derive(Debug)]
 pub struct Handle<T> {
-    id: types::InstanceId,
-    counter: types::InstanceCounter,
+    id: utils::InstanceId,
+    counter: utils::InstanceCounter,
     storage: Storage<T>,
 }
+
+impl<T> PartialEq for Handle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl<T> Eq for Handle<T> {}
 
 impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {

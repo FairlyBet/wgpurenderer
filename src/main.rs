@@ -186,7 +186,7 @@ impl State {
         let size = (size.0 as u32, size.1 as u32);
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::DX12,
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
 
@@ -510,7 +510,7 @@ impl State {
                 }),
                 occlusion_query_set: None,
                 timestamp_writes: None,
-                multiview_mask: None, 
+                multiview_mask: None,
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
