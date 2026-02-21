@@ -5,6 +5,7 @@ pub mod utils;
 use crate::utils::InstanceCounter;
 pub use camera::Camera;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use sorted_vec::SortedVec;
 use std::{borrow::Cow, cell::RefCell, num::NonZeroU32, ops::Range, rc::Rc};
 use transform::Transform;
@@ -29,7 +30,7 @@ pub struct Context {
 impl Context {
     pub fn new() -> Self {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::DX12,
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
 
@@ -140,12 +141,12 @@ impl Renderer {
             buffers: &material.veretex.buffers,
         };
 
-        let fragment = wgpu::FragmentState {
+        let fragment = material.fragment.as_ref().map(|f| wgpu::FragmentState {
             module: shader_module,
             entry_point: Some("fs_main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &material.fragment.targets,
-        };
+            targets: &f.targets,
+        });
 
         let desc = wgpu::RenderPipelineDescriptor {
             label: None,
@@ -154,7 +155,7 @@ impl Renderer {
             primitive: material.primitive,
             depth_stencil: material.depth_stencil.clone(),
             multisample: material.multisample,
-            fragment: Some(fragment),
+            fragment,
             multiview_mask: None,
             cache: None,
         };
@@ -169,18 +170,41 @@ impl Renderer {
         }
     }
 
-    pub fn create_bindgroup(&mut self) {
+    pub fn create_bindgroup(
+        &mut self,
+        layout_entries: &[wgpu::BindGroupLayoutEntry],
+        entries: &[wgpu::BindGroupEntry],
+    ) -> Handle<wgpu::BindGroup> {
+        let found = self
+            .bind_group_layout_cache
+            .iter()
+            .position(|(cached_entries, _)| cached_entries.as_slice() == layout_entries);
 
-        // let bind_group = self.ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        //     label: None,
-        //     layout: &self.bind_group_layout_cache[0].1,
-        //     entries: &[
-        //         wgpu::BindGroupEntry {
-        //             binding: 0,
-        //             resource: wgpu::BindingResource::,
-        //         }
-        //     ],
-        // });
+        let layout = if let Some(index) = found {
+            &self.bind_group_layout_cache[index].1
+        } else {
+            let bind_group_layout =
+                self.ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: None,
+                    entries: layout_entries,
+                });
+            self.bind_group_layout_cache.push((layout_entries.to_vec(), bind_group_layout));
+            &self.bind_group_layout_cache.last().unwrap().1
+        };
+
+        let bind_group = self.ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout,
+            entries,
+        });
+
+        let id = self.bind_group_storage.create(bind_group);
+
+        Handle {
+            id,
+            counter: InstanceCounter::new(),
+            storage: self.bind_group_storage.clone(),
+        }
     }
 }
 
@@ -204,7 +228,7 @@ pub struct Geometry {
 pub struct Material {
     bind_groups: Vec<Vec<wgpu::BindGroupLayoutEntry>>,
     veretex: Vertex,
-    fragment: Fragment,
+    fragment: Option<Fragment>,
     depth_stencil: Option<wgpu::DepthStencilState>,
     primitive: wgpu::PrimitiveState,
     multisample: wgpu::MultisampleState,
@@ -241,7 +265,7 @@ pub struct Primitive {
 #[derive(Debug, Clone)]
 pub struct ShaderData {
     immediates: Vec<u8>,
-    bind_groups: Vec<Handle<wgpu::BindGroup>>, // should have id
+    bind_groups: SmallVec<[Handle<wgpu::BindGroup>; 3]>,
 }
 
 ////////////////////////////////////////
@@ -341,8 +365,10 @@ pub struct Handle<T> {
 }
 
 impl Handle<wgpu::RenderPipeline> {
-    pub fn bind_group_layout(&self) {
-        // self.storage.inner.borrow().
+    pub fn get_bind_group_layout(&self, index: u32) -> wgpu::BindGroupLayout {
+        let storage = self.storage.inner.borrow();
+        let item = storage.data.binary_search_by(|item| item.id.cmp(&self.id)).unwrap();
+        storage.data[item].val.get_bind_group_layout(index)
     }
 }
 

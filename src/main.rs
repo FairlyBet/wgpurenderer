@@ -1,7 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use glam;
 use glfw::{Action, Key};
-use wgpurenderer::{Context, Renderer};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
