@@ -268,6 +268,8 @@ pub struct ShaderData {
     bind_groups: SmallVec<[Handle<wgpu::BindGroup>; 3]>,
 }
 
+pub struct RenderTarget {}
+
 ////////////////////////////////////////
 
 #[derive(Debug)]
