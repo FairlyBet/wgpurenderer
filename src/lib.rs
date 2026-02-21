@@ -2,10 +2,11 @@ pub mod camera;
 pub mod transform;
 pub mod utils;
 
+use crate::utils::InstanceCounter;
 pub use camera::Camera;
 use rustc_hash::FxHashMap;
 use sorted_vec::SortedVec;
-use std::{cell::RefCell, num::NonZeroU32, ops::Range, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, num::NonZeroU32, ops::Range, rc::Rc};
 use transform::Transform;
 use wgpu::{DeviceDescriptor, ExperimentalFeatures, Features, Limits};
 
@@ -97,56 +98,89 @@ impl Renderer {
         }
     }
 
-    pub fn create_material(
-        &mut self,
-        material_description: &MaterialDescription,
-    ) -> Handle<wgpu::RenderPipeline> {
-        let cached = self
-            .bind_group_layout_cache
-            .iter()
-            .find(|item| item.0 == material_description.bind_groups);
+    pub fn create_material(&mut self, material: &Material) -> Handle<wgpu::RenderPipeline> {
+        for item in &material.bind_groups {
+            let found = self.bind_group_layout_cache.iter().find(|(entries, _)| *entries == *item);
 
-        let layout = match cached {
-            Some(l) => l.1.clone(),
-            None => {
+            if found.is_none() {
                 let bind_group_layout =
-                    self.ctx
-                        .device
-                        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                            label: None,
-                            entries: &material_description.bind_groups,
-                        });
-                self.bind_group_layout_cache.push((
-                    material_description.bind_groups.clone(),
-                    bind_group_layout.clone(),
-                ));
-                bind_group_layout
+                    self.ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                        label: None,
+                        entries: item.as_slice(),
+                    });
+                self.bind_group_layout_cache.push((item.clone(), bind_group_layout));
             }
+        }
+
+        let bind_group_layouts: Vec<_> = material
+            .bind_groups
+            .iter()
+            .filter_map(|entries| self.bind_group_layout_cache.iter().find(|(e, _)| *entries == *e))
+            .map(|i| &i.1)
+            .collect();
+
+        // TODO: add caching
+        let layout = self.ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &bind_group_layouts,
+            immediate_size: 128,
+        });
+
+        let shader_module = self.shader_cache.entry(material.source.clone()).or_insert_with(|| {
+            self.ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(&material.source)),
+            })
+        });
+
+        let vertex = wgpu::VertexState {
+            module: shader_module,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &material.veretex.buffers,
         };
 
-        let render_pipeline_layout =
-            self.ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: None,
-                bind_group_layouts: &[&layout],
-                immediate_size: 128
-            });
+        let fragment = wgpu::FragmentState {
+            module: shader_module,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &material.fragment.targets,
+        };
 
-        // let desc = wgpu::RenderPipelineDescriptor {
+        let desc = wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&layout),
+            vertex,
+            primitive: material.primitive,
+            depth_stencil: material.depth_stencil.clone(),
+            multisample: material.multisample,
+            fragment: Some(fragment),
+            multiview_mask: None,
+            cache: None,
+        };
 
-            // label: None,
-            // layout: (),
-            // vertex: (),
-            // primitive: (),
-            // depth_stencil: (),
-            // multisample: (),
-            // fragment: (),
-            // multiview_mask: (),
-            // cache: (),
-        // };
+        let render_pipeline = self.ctx.device.create_render_pipeline(&desc);
+        let id = self.render_pipeline_storage.create(render_pipeline);
 
-        // self.ctx.device.create_render_pipeline()
+        Handle {
+            id,
+            counter: InstanceCounter::new(),
+            storage: self.render_pipeline_storage.clone(),
+        }
+    }
 
-        todo!()
+    pub fn create_bindgroup(&mut self) {
+
+        // let bind_group = self.ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     label: None,
+        //     layout: &self.bind_group_layout_cache[0].1,
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: wgpu::BindingResource::,
+        //         }
+        //     ],
+        // });
     }
 }
 
@@ -164,19 +198,16 @@ pub struct Geometry {
     buffers: Vec<(wgpu::Buffer, Option<Range<u64>>)>,
     vertex_count: u32,
     index_count: u32,
-    index_format: wgpu::IndexFormat,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MaterialDescription {
+pub struct Material {
     bind_groups: Vec<Vec<wgpu::BindGroupLayoutEntry>>,
     veretex: Vertex,
-    fragment: Vec<Fragment>,
-    depth_stencil: DepthStencil,
-    topology: Topology,
-    multisample_count: u32,
-    multisample_mask: u64,
-    alpha_to_coverage_enabled: bool,
+    fragment: Fragment,
+    depth_stencil: Option<wgpu::DepthStencilState>,
+    primitive: wgpu::PrimitiveState,
+    multisample: wgpu::MultisampleState,
     source: Box<str>,
 }
 
@@ -187,9 +218,7 @@ pub struct Vertex {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fragment {
-    format: wgpu::TextureFormat,
-    blend: Option<wgpu::BlendState>,
-    write_mask: wgpu::ColorWrites,
+    targets: Vec<Option<wgpu::ColorTargetState>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,7 +231,7 @@ pub struct DepthStencil {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Topology {
+pub struct Primitive {
     topology: wgpu::PrimitiveTopology,
     polygon_mode: wgpu::PolygonMode,
     front_face: wgpu::FrontFace,
@@ -259,17 +288,18 @@ impl<T> StorageInner<T> {
 
     fn insert(&mut self, val: T) -> utils::InstanceId {
         let id = self.id_pool.get_next();
-        let entry = Entry { val, id };
+        let entry = Entry {
+            val,
+            id,
+        };
         self.data.push(entry);
         id
     }
 
     fn delete(&mut self, id: utils::InstanceId) {
         self.id_pool.free(id);
-        let index = self
-            .data
-            .binary_search_by_key(&id, |item| item.id)
-            .expect("Value is not present");
+        let index =
+            self.data.binary_search_by_key(&id, |item| item.id).expect("Value is not present");
         _ = self.data.remove_index(index);
     }
 }
@@ -308,6 +338,12 @@ pub struct Handle<T> {
     id: utils::InstanceId,
     counter: utils::InstanceCounter,
     storage: Storage<T>,
+}
+
+impl Handle<wgpu::RenderPipeline> {
+    pub fn bind_group_layout(&self) {
+        // self.storage.inner.borrow().
+    }
 }
 
 impl<T> PartialEq for Handle<T> {

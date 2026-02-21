@@ -1,0 +1,7 @@
+edition = "2024"
+use_small_heuristics = "Off"
+max_width = 100
+
+# style_edition = "2024"
+# brace_style = "AlwaysNextLine"
+# control_brace_style = "AlwaysNextLine"
