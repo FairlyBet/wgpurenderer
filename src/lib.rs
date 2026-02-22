@@ -660,3 +660,17 @@ impl<T> Drop for Handle<T> {
         }
     }
 }
+
+impl Handle<ImmediateRegion> {
+    pub fn upload(data: &[u8]) {}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ImmediateRegion(Range<usize>);
+
+struct ImmediateBuffer {
+    storage: RcSortedVecWrapper<Entry<ImmediateRegion>>,
+    buffer: Vec<u8>,
+}
+
+impl ImmediateBuffer {}
