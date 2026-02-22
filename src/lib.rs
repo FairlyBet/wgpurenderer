@@ -82,8 +82,8 @@ impl Context {
 #[derive(Debug)]
 pub struct Renderer {
     context: Context,
-    bind_group_storage: Storage<wgpu::BindGroup>,
-    render_pipeline_storage: Storage<wgpu::RenderPipeline>,
+    bind_group_storage: RcSortedVecWrapper<wgpu::BindGroup>,
+    render_pipeline_storage: RcSortedVecWrapper<wgpu::RenderPipeline>,
     shader_cache: FxHashMap<Cow<'static, str>, wgpu::ShaderModule>,
     bind_group_layout_cache: Vec<(Vec<wgpu::BindGroupLayoutEntry>, wgpu::BindGroupLayout)>,
     pub surface: Option<wgpu::Surface<'static>>,
@@ -97,8 +97,8 @@ impl Renderer {
     pub fn new() -> Self {
         Self {
             context: Context::new(),
-            bind_group_storage: Storage::new(),
-            render_pipeline_storage: Storage::new(),
+            bind_group_storage: RcSortedVecWrapper::new(),
+            render_pipeline_storage: RcSortedVecWrapper::new(),
             shader_cache: FxHashMap::default(),
             bind_group_layout_cache: Vec::new(),
             surface: None,
@@ -283,8 +283,11 @@ impl Renderer {
                 label: None,
             });
 
+        let pipeline_storage = self.render_pipeline_storage.inner.borrow();
+        let bind_group_storage = self.bind_group_storage.inner.borrow();
+
         for render_pass in render_passes.iter_mut() {
-            render_pass.render(&mut encoder, self);
+            render_pass.render(&mut encoder, &pipeline_storage, &bind_group_storage);
         }
 
         self.context.queue().submit(Some(encoder.finish()));
@@ -383,7 +386,12 @@ pub struct RenderPass {
 }
 
 impl RenderPass {
-    fn render(&mut self, encoder: &mut wgpu::CommandEncoder, renderer: &Renderer) {
+    fn render(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline_storage: &RcSortedVec<wgpu::RenderPipeline>,
+        bind_group_storage: &RcSortedVec<wgpu::BindGroup>,
+    ) {
         let color_attachments: SmallVec<[_; 1]> = self
             .render_target
             .color_attachments
@@ -417,10 +425,20 @@ impl RenderPass {
         };
 
         if let Some(executor) = &mut self.executor {
-            executor.execute(encoder, &render_pass_descriptor);
+            executor.execute(
+                encoder,
+                &render_pass_descriptor,
+                pipeline_storage,
+                bind_group_storage,
+            );
         } else {
             let mut render_pass = encoder.begin_render_pass(&render_pass_descriptor);
-            execute_ordered_draw_calls(&mut render_pass, &mut self.draw_calls, renderer);
+            execute_ordered_draw_calls(
+                &mut render_pass,
+                &mut self.draw_calls,
+                pipeline_storage,
+                bind_group_storage,
+            );
         }
     }
 }
@@ -430,13 +448,16 @@ pub trait RenderPassExecutor: Debug {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         render_pass_descriptor: &wgpu::RenderPassDescriptor,
+        pipeline_storage: &RcSortedVec<wgpu::RenderPipeline>,
+        bind_group_storage: &RcSortedVec<wgpu::BindGroup>,
     );
 }
 
 pub fn execute_ordered_draw_calls(
     render_pass: &mut wgpu::RenderPass,
     draw_calls: &mut [DrawCall],
-    renderer: &Renderer,
+    pipeline_storage: &RcSortedVec<wgpu::RenderPipeline>,
+    bind_group_storage: &RcSortedVec<wgpu::BindGroup>,
 ) {
     // Sort draw calls to minimize state changes: Pipeline -> BindGroups
     draw_calls.sort_by(|a, b| {
@@ -451,9 +472,6 @@ pub fn execute_ordered_draw_calls(
         }
     });
 
-    let pipeline_storage = renderer.render_pipeline_storage.inner.borrow();
-    let bind_group_storage = renderer.bind_group_storage.inner.borrow();
-
     let mut current_pipeline_id = None;
     let mut current_bind_groups: SmallVec<[Option<utils::InstanceId>; 3]> =
         SmallVec::from_elem(None, 3);
@@ -461,12 +479,8 @@ pub fn execute_ordered_draw_calls(
     for draw_call in draw_calls {
         // 1. Set pipeline
         if Some(draw_call.render_pipeline_handle.id) != current_pipeline_id {
-            let entry = pipeline_storage
-                .data
-                .iter()
-                .find(|e| e.id == draw_call.render_pipeline_handle.id)
-                .unwrap();
-            render_pass.set_pipeline(&entry.val);
+            let pipeline = pipeline_storage.get(draw_call.render_pipeline_handle.id).unwrap();
+            render_pass.set_pipeline(pipeline);
             current_pipeline_id = Some(draw_call.render_pipeline_handle.id);
             // Reset bind groups cache because new pipeline might have different layouts
             current_bind_groups.fill(None);
@@ -475,8 +489,8 @@ pub fn execute_ordered_draw_calls(
         // 2. Set bind groups
         for (i, bg_handle) in draw_call.shader_data.bind_groups.iter().enumerate() {
             if i >= current_bind_groups.len() || Some(bg_handle.id) != current_bind_groups[i] {
-                let entry = bind_group_storage.data.iter().find(|e| e.id == bg_handle.id).unwrap();
-                render_pass.set_bind_group(i as u32, &entry.val, &[]);
+                let bind_group = bind_group_storage.get(bg_handle.id).unwrap();
+                render_pass.set_bind_group(i as u32, bind_group, &[]);
 
                 if i < current_bind_groups.len() {
                     current_bind_groups[i] = Some(bg_handle.id);
@@ -539,20 +553,25 @@ impl<T> Ord for Entry<T> {
 }
 
 #[derive(Debug)]
-struct StorageInner<T> {
+pub struct RcSortedVec<T> {
     data: SortedVec<Entry<T>>,
     id_pool: utils::IdPool,
 }
 
-impl<T> StorageInner<T> {
-    fn new() -> Self {
+impl<T> RcSortedVec<T> {
+    pub fn new() -> Self {
         Self {
             data: SortedVec::new(),
             id_pool: utils::IdPool::new(),
         }
     }
 
-    fn insert(&mut self, val: T) -> utils::InstanceId {
+    pub fn get(&self, id: utils::InstanceId) -> Option<&T> {
+        let index = self.data.binary_search_by_key(&id, |item| item.id).ok()?;
+        Some(&self.data[index].val)
+    }
+
+    pub fn insert(&mut self, val: T) -> utils::InstanceId {
         let id = self.id_pool.get_next();
         let entry = Entry {
             val,
@@ -562,7 +581,7 @@ impl<T> StorageInner<T> {
         id
     }
 
-    fn delete(&mut self, id: utils::InstanceId) {
+    pub fn delete(&mut self, id: utils::InstanceId) {
         self.id_pool.free(id);
         let index =
             self.data.binary_search_by_key(&id, |item| item.id).expect("Value is not present");
@@ -571,14 +590,14 @@ impl<T> StorageInner<T> {
 }
 
 #[derive(Debug)]
-struct Storage<T> {
-    inner: Rc<RefCell<StorageInner<T>>>,
+struct RcSortedVecWrapper<T> {
+    inner: Rc<RefCell<RcSortedVec<T>>>,
 }
 
-impl<T> Storage<T> {
+impl<T> RcSortedVecWrapper<T> {
     fn new() -> Self {
         Self {
-            inner: Rc::new(RefCell::new(StorageInner::new())),
+            inner: Rc::new(RefCell::new(RcSortedVec::new())),
         }
     }
 
@@ -591,7 +610,7 @@ impl<T> Storage<T> {
     }
 }
 
-impl<T> Clone for Storage<T> {
+impl<T> Clone for RcSortedVecWrapper<T> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -603,7 +622,7 @@ impl<T> Clone for Storage<T> {
 pub struct Handle<T> {
     id: utils::InstanceId,
     counter: utils::InstanceCounter,
-    storage: Storage<T>,
+    storage: RcSortedVecWrapper<T>,
 }
 
 // impl Handle<wgpu::RenderPipeline> {
