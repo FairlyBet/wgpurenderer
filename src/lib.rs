@@ -7,7 +7,7 @@ pub use camera::Camera;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use sorted_vec::SortedVec;
-use std::{borrow::Cow, cell::RefCell, num::NonZeroU32, ops::Range, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, fmt::Debug, num::NonZeroU32, ops::Range, rc::Rc};
 use transform::Transform;
 use wgpu::{DeviceDescriptor, ExperimentalFeatures, Features, Limits};
 
@@ -79,23 +79,92 @@ impl Context {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Renderer {
-    ctx: Context,
+    context: Context,
     bind_group_storage: Storage<wgpu::BindGroup>,
     render_pipeline_storage: Storage<wgpu::RenderPipeline>,
-    shader_cache: FxHashMap<Box<str>, wgpu::ShaderModule>,
+    shader_cache: FxHashMap<Cow<'static, str>, wgpu::ShaderModule>,
     bind_group_layout_cache: Vec<(Vec<wgpu::BindGroupLayoutEntry>, wgpu::BindGroupLayout)>,
+    pub surface: Option<wgpu::Surface<'static>>,
+    pub config: Option<wgpu::SurfaceConfiguration>,
+    pub surface_texture: Option<wgpu::SurfaceTexture>,
+    pub surface_view: Option<wgpu::TextureView>,
+    // TODO: determine duplicating render pipelines and return the existing one
 }
 
 impl Renderer {
     pub fn new() -> Self {
         Self {
-            ctx: Context::new(),
+            context: Context::new(),
             bind_group_storage: Storage::new(),
             render_pipeline_storage: Storage::new(),
             shader_cache: FxHashMap::default(),
             bind_group_layout_cache: Vec::new(),
+            surface: None,
+            config: None,
+            surface_texture: None,
+            surface_view: None,
+        }
+    }
+
+    pub fn context(&self) -> &Context {
+        &self.context
+    }
+
+    pub fn init_surface(&mut self, surface: wgpu::Surface<'static>, width: u32, height: u32) {
+        let surface_caps = surface.get_capabilities(self.context.adapter());
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(surface_caps.formats[0]);
+
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width,
+            height,
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(self.context.device(), &config);
+
+        self.surface = Some(surface);
+        self.config = Some(config);
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width > 0 && height > 0 {
+            if let (Some(surface), Some(config)) = (&mut self.surface, &mut self.config) {
+                config.width = width;
+                config.height = height;
+                surface.configure(self.context.device(), config);
+            }
+        }
+    }
+
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
+        self.config.as_ref().map(|c| c.format).unwrap_or(wgpu::TextureFormat::Bgra8Unorm)
+    }
+
+    pub fn acquire(&mut self) -> Result<(), wgpu::SurfaceError> {
+        if let Some(surface) = &self.surface {
+            let output = surface.get_current_texture()?;
+            let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+            self.surface_texture = Some(output);
+            self.surface_view = Some(view);
+        }
+        Ok(())
+    }
+
+    pub fn present(&mut self) {
+        self.surface_view = None;
+        if let Some(texture) = self.surface_texture.take() {
+            texture.present();
         }
     }
 
@@ -104,11 +173,12 @@ impl Renderer {
             let found = self.bind_group_layout_cache.iter().find(|(entries, _)| *entries == *item);
 
             if found.is_none() {
-                let bind_group_layout =
-                    self.ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                let bind_group_layout = self.context.device.create_bind_group_layout(
+                    &wgpu::BindGroupLayoutDescriptor {
                         label: None,
                         entries: item.as_slice(),
-                    });
+                    },
+                );
                 self.bind_group_layout_cache.push((item.clone(), bind_group_layout));
             }
         }
@@ -121,16 +191,16 @@ impl Renderer {
             .collect();
 
         // TODO: add caching
-        let layout = self.ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let layout = self.context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &bind_group_layouts,
             immediate_size: 128,
         });
 
         let shader_module = self.shader_cache.entry(material.source.clone()).or_insert_with(|| {
-            self.ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            self.context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(&material.source)),
+                source: wgpu::ShaderSource::Wgsl(material.source.clone()),
             })
         });
 
@@ -138,7 +208,7 @@ impl Renderer {
             module: shader_module,
             entry_point: Some("vs_main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &material.veretex.buffers,
+            buffers: &material.vertex.buffers,
         };
 
         let fragment = material.fragment.as_ref().map(|f| wgpu::FragmentState {
@@ -160,7 +230,7 @@ impl Renderer {
             cache: None,
         };
 
-        let render_pipeline = self.ctx.device.create_render_pipeline(&desc);
+        let render_pipeline = self.context.device.create_render_pipeline(&desc);
         let id = self.render_pipeline_storage.create(render_pipeline);
 
         Handle {
@@ -184,7 +254,7 @@ impl Renderer {
             &self.bind_group_layout_cache[index].1
         } else {
             let bind_group_layout =
-                self.ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                self.context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: None,
                     entries: layout_entries,
                 });
@@ -192,7 +262,7 @@ impl Renderer {
             &self.bind_group_layout_cache.last().unwrap().1
         };
 
-        let bind_group = self.ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = self.context.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout,
             entries,
@@ -206,68 +276,82 @@ impl Renderer {
             storage: self.bind_group_storage.clone(),
         }
     }
+
+    pub fn render(&self, render_passes: &mut [&mut RenderPass]) {
+        let mut encoder =
+            self.context.device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: None,
+            });
+
+        for render_pass in render_passes.iter_mut() {
+            render_pass.render(&mut encoder, self);
+        }
+
+        self.context.queue().submit(Some(encoder.finish()));
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DrawCall {
-    geometry: Geometry,
-    shader_data: ShaderData,
-    instance_count: NonZeroU32,
-    render_pipeline_handle: Handle<wgpu::RenderPipeline>,
+    pub geometry: Geometry,
+    pub shader_data: ShaderData,
+    pub instance_count: NonZeroU32,
+    pub render_pipeline_handle: Handle<wgpu::RenderPipeline>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Geometry {
-    index_buffer: Option<wgpu::Buffer>,
-    buffers: Vec<(wgpu::Buffer, Option<Range<u64>>)>,
-    vertex_count: u32,
-    index_count: u32,
+    pub index_buffer: Option<wgpu::Buffer>,
+    pub index_format: wgpu::IndexFormat,
+    pub buffers: Vec<(wgpu::Buffer, Option<Range<u64>>)>,
+    pub count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Material {
-    bind_groups: Vec<Vec<wgpu::BindGroupLayoutEntry>>,
-    veretex: Vertex,
-    fragment: Option<Fragment>,
-    depth_stencil: Option<wgpu::DepthStencilState>,
-    primitive: wgpu::PrimitiveState,
-    multisample: wgpu::MultisampleState,
-    source: Box<str>,
+    pub bind_groups: Vec<Vec<wgpu::BindGroupLayoutEntry>>,
+    pub vertex: Vertex,
+    pub fragment: Option<Fragment>,
+    pub depth_stencil: Option<wgpu::DepthStencilState>,
+    pub primitive: wgpu::PrimitiveState,
+    pub multisample: wgpu::MultisampleState,
+    pub source: Cow<'static, str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Vertex {
-    buffers: Vec<wgpu::VertexBufferLayout<'static>>,
+    pub buffers: Vec<wgpu::VertexBufferLayout<'static>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fragment {
-    targets: Vec<Option<wgpu::ColorTargetState>>,
+    pub targets: Vec<Option<wgpu::ColorTargetState>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DepthStencil {
-    depth_format: wgpu::TextureFormat,
-    depth_write_enabled: bool,
-    depth_compare: wgpu::CompareFunction,
-    stencil: wgpu::StencilState,
-    unclipped_depth: bool,
+    pub depth_format: wgpu::TextureFormat,
+    pub depth_write_enabled: bool,
+    pub depth_compare: wgpu::CompareFunction,
+    pub stencil: wgpu::StencilState,
+    pub unclipped_depth: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Primitive {
-    topology: wgpu::PrimitiveTopology,
-    polygon_mode: wgpu::PolygonMode,
-    front_face: wgpu::FrontFace,
-    cull_mode: Option<wgpu::Face>,
+    pub topology: wgpu::PrimitiveTopology,
+    pub polygon_mode: wgpu::PolygonMode,
+    pub front_face: wgpu::FrontFace,
+    pub cull_mode: Option<wgpu::Face>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ShaderData {
-    immediates: Vec<u8>,
-    bind_groups: SmallVec<[Handle<wgpu::BindGroup>; 3]>,
+    pub immediates: Vec<u8>,
+    pub bind_groups: SmallVec<[Handle<wgpu::BindGroup>; 3]>,
 }
 
+#[derive(Debug, Clone)]
 pub struct ColorAttachment {
     pub view: wgpu::TextureView,
     pub depth_slice: Option<u32>,
@@ -275,24 +359,155 @@ pub struct ColorAttachment {
     pub ops: wgpu::Operations<wgpu::Color>,
 }
 
+#[derive(Debug, Clone)]
 pub struct DepthStencilAttachment {
     pub view: wgpu::TextureView,
     pub depth_ops: Option<wgpu::Operations<f32>>,
     pub stencil_ops: Option<wgpu::Operations<u32>>,
 }
 
+#[derive(Debug, Clone)]
 pub struct RenderTarget {
     pub color_attachments: SmallVec<[ColorAttachment; 1]>,
     pub depth_stencil_attachment: Option<DepthStencilAttachment>,
 }
 
+#[derive(Debug)]
 pub struct RenderPass {
     pub render_target: RenderTarget,
-    // pub timestamp_writes: Option<RenderPassTimestampWrites<'a>>,
-    // pub occlusion_query_set: Option<&'a QuerySet>,
+    // TODO: pub timestamp_writes: Option<RenderPassTimestampWrites<'a>>,
+    // TODO: pub occlusion_query_set: Option<&'a QuerySet>,
     pub multiview_mask: Option<NonZeroU32>,
     pub draw_calls: Vec<DrawCall>,
-    pub execution: Option<Box<dyn FnMut()>>,
+    pub executor: Option<Box<dyn RenderPassExecutor>>,
+}
+
+impl RenderPass {
+    fn render(&mut self, encoder: &mut wgpu::CommandEncoder, renderer: &Renderer) {
+        let color_attachments: SmallVec<[_; 1]> = self
+            .render_target
+            .color_attachments
+            .iter()
+            .map(|attachment| {
+                Some(wgpu::RenderPassColorAttachment {
+                    view: &attachment.view,
+                    resolve_target: attachment.resolve_target.as_ref(),
+                    ops: attachment.ops,
+                    depth_slice: attachment.depth_slice,
+                })
+            })
+            .collect();
+
+        let depth_stencil_attachment =
+            self.render_target.depth_stencil_attachment.as_ref().map(|attachment| {
+                wgpu::RenderPassDepthStencilAttachment {
+                    view: &attachment.view,
+                    depth_ops: attachment.depth_ops,
+                    stencil_ops: attachment.stencil_ops,
+                }
+            });
+
+        let render_pass_descriptor = wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &color_attachments,
+            depth_stencil_attachment,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: self.multiview_mask,
+        };
+
+        if let Some(executor) = &mut self.executor {
+            executor.execute(encoder, &render_pass_descriptor);
+        } else {
+            let mut render_pass = encoder.begin_render_pass(&render_pass_descriptor);
+            execute_ordered_draw_calls(&mut render_pass, &mut self.draw_calls, renderer);
+        }
+    }
+}
+
+pub trait RenderPassExecutor: Debug {
+    fn execute(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        render_pass_descriptor: &wgpu::RenderPassDescriptor,
+    );
+}
+
+pub fn execute_ordered_draw_calls(
+    render_pass: &mut wgpu::RenderPass,
+    draw_calls: &mut [DrawCall],
+    renderer: &Renderer,
+) {
+    // Sort draw calls to minimize state changes: Pipeline -> BindGroups
+    draw_calls.sort_by(|a, b| {
+        match a.render_pipeline_handle.id.cmp(&b.render_pipeline_handle.id) {
+            std::cmp::Ordering::Equal => a
+                .shader_data
+                .bind_groups
+                .iter()
+                .map(|h| h.id)
+                .cmp(b.shader_data.bind_groups.iter().map(|h| h.id)),
+            ord => ord,
+        }
+    });
+
+    let pipeline_storage = renderer.render_pipeline_storage.inner.borrow();
+    let bind_group_storage = renderer.bind_group_storage.inner.borrow();
+
+    let mut current_pipeline_id = None;
+    let mut current_bind_groups: SmallVec<[Option<utils::InstanceId>; 3]> =
+        SmallVec::from_elem(None, 3);
+
+    for draw_call in draw_calls {
+        // 1. Set pipeline
+        if Some(draw_call.render_pipeline_handle.id) != current_pipeline_id {
+            let entry = pipeline_storage
+                .data
+                .iter()
+                .find(|e| e.id == draw_call.render_pipeline_handle.id)
+                .unwrap();
+            render_pass.set_pipeline(&entry.val);
+            current_pipeline_id = Some(draw_call.render_pipeline_handle.id);
+            // Reset bind groups cache because new pipeline might have different layouts
+            current_bind_groups.fill(None);
+        }
+
+        // 2. Set bind groups
+        for (i, bg_handle) in draw_call.shader_data.bind_groups.iter().enumerate() {
+            if i >= current_bind_groups.len() || Some(bg_handle.id) != current_bind_groups[i] {
+                let entry = bind_group_storage.data.iter().find(|e| e.id == bg_handle.id).unwrap();
+                render_pass.set_bind_group(i as u32, &entry.val, &[]);
+
+                if i < current_bind_groups.len() {
+                    current_bind_groups[i] = Some(bg_handle.id);
+                }
+            }
+        }
+
+        // 3. Set vertex/index buffers
+        for (i, (buffer, range)) in draw_call.geometry.buffers.iter().enumerate() {
+            let offset = range.as_ref().map_or(0, |r| r.start);
+            render_pass.set_vertex_buffer(
+                i as u32,
+                buffer.slice(offset..range.as_ref().map_or(buffer.size(), |r| r.end)),
+            );
+        }
+
+        if !draw_call.shader_data.immediates.is_empty() {
+            render_pass.set_immediates(0, &draw_call.shader_data.immediates);
+        }
+
+        if let Some(index_buffer) = &draw_call.geometry.index_buffer {
+            render_pass.set_index_buffer(index_buffer.slice(..), draw_call.geometry.index_format);
+            render_pass.draw_indexed(
+                0..draw_call.geometry.count,
+                0,
+                0..draw_call.instance_count.get(),
+            );
+        } else {
+            render_pass.draw(0..draw_call.geometry.count, 0..draw_call.instance_count.get());
+        }
+    }
 }
 
 ////////////////////////////////////////
@@ -391,13 +606,13 @@ pub struct Handle<T> {
     storage: Storage<T>,
 }
 
-impl Handle<wgpu::RenderPipeline> {
-    pub fn get_bind_group_layout(&self, index: u32) -> wgpu::BindGroupLayout {
-        let storage = self.storage.inner.borrow();
-        let item = storage.data.binary_search_by(|item| item.id.cmp(&self.id)).unwrap();
-        storage.data[item].val.get_bind_group_layout(index)
-    }
-}
+// impl Handle<wgpu::RenderPipeline> {
+//     pub fn get_bind_group_layout(&self, index: u32) -> wgpu::BindGroupLayout {
+//         let storage = self.storage.inner.borrow();
+//         let item = storage.data.binary_search_by(|item| item.id.cmp(&self.id)).unwrap();
+//         storage.data[item].val.get_bind_group_layout(index)
+//     }
+// }
 
 impl<T> PartialEq for Handle<T> {
     fn eq(&self, other: &Self) -> bool {

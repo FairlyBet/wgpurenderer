@@ -1,6 +1,9 @@
 use bytemuck::{Pod, Zeroable};
 use glam;
 use glfw::{Action, Key};
+use std::borrow::Cow;
+use std::num::NonZeroU32;
+use wgpu::util::DeviceExt;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -38,27 +41,6 @@ struct Uniforms {
     projection: [[f32; 4]; 4],
     light_color: [f32; 3],
     _padding: f32,
-}
-
-struct State {
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
-    size: (u32, u32),
-    render_pipeline: wgpu::RenderPipeline,
-    msaa_texture: wgpu::Texture,
-    msaa_view: wgpu::TextureView,
-    depth_texture: wgpu::Texture,
-    depth_view: wgpu::TextureView,
-    sample_count: u32,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    num_indices: u32,
-    uniform_buffer: wgpu::Buffer,
-    uniform_bind_group: wgpu::BindGroup,
-    rotation: f32,
-    start_time: std::time::Instant,
 }
 
 fn create_cube_mesh() -> (Vec<Vertex>, Vec<u16>) {
@@ -179,146 +161,74 @@ fn create_cube_mesh() -> (Vec<Vertex>, Vec<u16>) {
     (vertices, indices)
 }
 
+struct State {
+    size: (u32, u32),
+    renderer: wgpurenderer::Renderer,
+    msaa_texture: wgpu::Texture,
+    depth_texture: wgpu::Texture,
+    sample_count: u32,
+    uniform_buffer: wgpu::Buffer,
+    render_pass: wgpurenderer::RenderPass,
+    rotation: f32,
+    start_time: std::time::Instant,
+}
+
 impl State {
     async fn new(context: glfw::PRenderContext) -> Self {
         let size = (800, 600);
-        let size = (size.0 as u32, size.1 as u32);
 
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN,
-            ..Default::default()
-        });
+        let mut renderer = wgpurenderer::Renderer::new();
+        let surface = renderer.context().instance().create_surface(context).unwrap();
 
-        let surface = instance.create_surface(context).unwrap();
+        renderer.init_surface(surface, size.0, size.1);
 
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .unwrap();
-
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                label: None,
-                memory_hints: wgpu::MemoryHints::default(),
-                experimental_features: wgpu::ExperimentalFeatures::default(),
-                trace: wgpu::Trace::default(),
-            })
-            .await
-            .unwrap();
-
-        let surface_caps = surface.get_capabilities(&adapter);
-        // Prefer non-sRGB format to avoid VK_IMAGE_USAGE_STORAGE_BIT validation errors
-        // sRGB formats often don't support storage on some GPUs
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(surface_caps.formats[0]);
-
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: size.0,
-            height: size.1,
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-
-        surface.configure(&device, &config);
-
-        // Create cube mesh
         let (vertices, indices) = create_cube_mesh();
         let num_indices = indices.len() as u32;
 
-        // Create vertex buffer
+        let vertex_buffer =
+            renderer.context().device().create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Vertex Buffer"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Vertex Buffer"),
-            size: (vertices.len() * std::mem::size_of::<Vertex>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+        let index_buffer =
+            renderer.context().device().create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Index Buffer"),
+                contents: bytemuck::cast_slice(&indices),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            });
 
-        // Create index buffer
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Index Buffer"),
-            size: (indices.len() * std::mem::size_of::<u16>()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&index_buffer, 0, bytemuck::cast_slice(&indices));
-
-        // Create uniform buffer
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = renderer.context().device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("Uniform Buffer"),
             size: std::mem::size_of::<Uniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        // Create bind group layout
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        // Create bind group
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
-        });
-
-        let shader = wgpu::include_wgsl!("../shaders/shader.wgsl");
-        let shader = device.create_shader_module(shader);
-
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&bind_group_layout],
-                immediate_size: 128,
-            });
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
-                compilation_options: Default::default(),
+        // 1. Create material
+        let bind_group_layout = vec![wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
+            count: None,
+        }];
+
+        let material = wgpurenderer::Material {
+            bind_groups: vec![bind_group_layout.clone()],
+            vertex: wgpurenderer::Vertex {
+                buffers: vec![Vertex::desc()],
+            },
+            fragment: Some(wgpurenderer::Fragment {
+                targets: vec![Some(wgpu::ColorTargetState {
+                    format: renderer.surface_format(),
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
-                compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -341,33 +251,90 @@ impl State {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview_mask: None,
-            cache: None,
-        });
+            source: Cow::Borrowed(include_str!("../shaders/shader.wgsl")),
+        };
+
+        let pipeline_handle = renderer.create_material(&material);
+
+        let bindgroup_handle = renderer.create_bindgroup(
+            &bind_group_layout,
+            &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        );
+
+        let geometry = wgpurenderer::Geometry {
+            index_buffer: Some(index_buffer),
+            index_format: wgpu::IndexFormat::Uint16,
+            buffers: vec![(vertex_buffer, None)],
+            count: num_indices,
+        };
+
+        let shader_data = wgpurenderer::ShaderData {
+            immediates: Vec::new(),
+            bind_groups: smallvec::smallvec![bindgroup_handle],
+        };
+
+        let draw_call = wgpurenderer::DrawCall {
+            geometry,
+            shader_data,
+            instance_count: NonZeroU32::new(1).unwrap(),
+            render_pipeline_handle: pipeline_handle,
+        };
 
         let sample_count = 4;
-        let (msaa_texture, msaa_view) = Self::create_msaa_texture(&device, &config, sample_count);
-        let (depth_texture, depth_view) =
-            Self::create_depth_texture(&device, &config, sample_count);
-        // println!("{}", device.limits().max_dynamic_uniform_buffers_per_pipeline_layout );
-        println!("{}", device.limits().min_storage_buffer_offset_alignment);
-        Self {
-            surface,
-            device,
-            queue,
-            config,
-            size,
-            render_pipeline,
-            msaa_texture,
-            msaa_view,
-            depth_texture,
-            depth_view,
+        let msaa_texture = Self::create_msaa_texture(
+            renderer.context().device(),
+            size.0,
+            size.1,
+            renderer.surface_format(),
             sample_count,
-            vertex_buffer,
-            index_buffer,
-            num_indices,
+        );
+        let depth_texture =
+            Self::create_depth_texture(renderer.context().device(), size.0, size.1, sample_count);
+
+        let msaa_view = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let render_pass = wgpurenderer::RenderPass {
+            render_target: wgpurenderer::RenderTarget {
+                color_attachments: smallvec::smallvec![wgpurenderer::ColorAttachment {
+                    view: msaa_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.2,
+                            b: 0.3,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                }],
+                depth_stencil_attachment: Some(wgpurenderer::DepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+            },
+            multiview_mask: None,
+            draw_calls: vec![draw_call],
+            executor: None,
+        };
+
+        Self {
+            size,
+            renderer,
+            msaa_texture,
+            depth_texture,
+            sample_count,
             uniform_buffer,
-            uniform_bind_group,
+            render_pass,
             rotation: 0.0,
             start_time: std::time::Instant::now(),
         }
@@ -375,39 +342,38 @@ impl State {
 
     fn create_msaa_texture(
         device: &wgpu::Device,
-        config: &wgpu::SurfaceConfiguration,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
         sample_count: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let msaa_texture = device.create_texture(&wgpu::TextureDescriptor {
+    ) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
             label: Some("MSAA Texture"),
             size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count,
             dimension: wgpu::TextureDimension::D2,
-            format: config.format,
+            format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
-        });
-
-        let msaa_view = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        (msaa_texture, msaa_view)
+        })
     }
 
     fn create_depth_texture(
         device: &wgpu::Device,
-        config: &wgpu::SurfaceConfiguration,
+        width: u32,
+        height: u32,
         sample_count: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView) {
-        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+    ) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Depth Texture"),
             size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -416,29 +382,31 @@ impl State {
             format: wgpu::TextureFormat::Depth32Float,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
-        });
-
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        (depth_texture, depth_view)
+        })
     }
 
     fn resize(&mut self, new_size: (u32, u32)) {
         if new_size.0 > 0 && new_size.1 > 0 {
             self.size = new_size;
-            self.config.width = new_size.0;
-            self.config.height = new_size.1;
-            self.surface.configure(&self.device, &self.config);
+            self.renderer.resize(self.size.0, self.size.1);
 
-            let (msaa_texture, msaa_view) =
-                Self::create_msaa_texture(&self.device, &self.config, self.sample_count);
-            self.msaa_texture = msaa_texture;
-            self.msaa_view = msaa_view;
-
-            let (depth_texture, depth_view) =
-                Self::create_depth_texture(&self.device, &self.config, self.sample_count);
-            self.depth_texture = depth_texture;
-            self.depth_view = depth_view;
+            self.msaa_texture = Self::create_msaa_texture(
+                self.renderer.context().device(),
+                self.size.0,
+                self.size.1,
+                self.renderer.surface_format(),
+                self.sample_count,
+            );
+            self.depth_texture = Self::create_depth_texture(
+                self.renderer.context().device(),
+                self.size.0,
+                self.size.1,
+                self.sample_count,
+            );
+            self.render_pass.render_target.color_attachments[0].view =
+                self.msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            self.render_pass.render_target.depth_stencil_attachment.as_mut().unwrap().view =
+                self.depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
         }
     }
 
@@ -446,7 +414,6 @@ impl State {
         let elapsed = self.start_time.elapsed().as_secs_f32();
         self.rotation = elapsed;
 
-        // Create matrices
         let axis = glam::Vec3::new(0.5, 1.0, 0.0).normalize();
         let model = glam::Mat4::from_axis_angle(axis, self.rotation);
         let view = glam::Mat4::look_at_rh(
@@ -465,82 +432,28 @@ impl State {
             _padding: 0.0,
         };
 
-        self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        self.renderer.context().queue().write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniforms),
+        );
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let output = self.surface.get_current_texture()?;
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.renderer.acquire()?;
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+        self.render_pass.render_target.color_attachments[0].resolve_target =
+            Some(self.renderer.surface_view.as_ref().unwrap().clone());
 
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.msaa_view,
-                    resolve_target: Some(&view),
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-                multiview_mask: None,
-            });
-
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            // render_pass.execute_bundles(render_bundles);
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
+        self.renderer.render(&mut [&mut self.render_pass]);
+        self.renderer.present();
 
         Ok(())
     }
 }
 
-// per instance
-struct UniformData {
-    metalic: f32,
-    roughness: f32,
-    ao: f32,
-    basecolor: [f32; 3],
-}
-
-// per frame
-struct CameraData {
-    position: [f32; 3],
-    view_projection: (),
-}
-
 fn main() {
-    // uniform_state.register_per_instance::< UniformData >();
-    // uniform_state.register_per_frame::< CameraData >();
-    // uniform_state.
     env_logger::init();
-
     let mut glfw = glfw::init(glfw::fail_on_errors).unwrap();
 
     glfw.window_hint(glfw::WindowHint::ClientApi(glfw::ClientApiHint::NoApi));
@@ -554,9 +467,6 @@ fn main() {
     window.set_framebuffer_size_polling(true);
     let context = window.render_context();
     let mut state = pollster::block_on(State::new(context));
-
-    // let geometry = geometry::Geometry::new();
-    // geometry.add_vertex_buffer( geometry::VertexBuffer::new(device, queue, slot, data, attributes, step_mode) );
 
     while !window.should_close() {
         glfw.poll_events();
