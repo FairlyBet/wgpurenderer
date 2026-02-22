@@ -268,7 +268,32 @@ pub struct ShaderData {
     bind_groups: SmallVec<[Handle<wgpu::BindGroup>; 3]>,
 }
 
-pub struct RenderTarget {}
+pub struct ColorAttachment {
+    pub view: wgpu::TextureView,
+    pub depth_slice: Option<u32>,
+    pub resolve_target: Option<wgpu::TextureView>,
+    pub ops: wgpu::Operations<wgpu::Color>,
+}
+
+pub struct DepthStencilAttachment {
+    pub view: wgpu::TextureView,
+    pub depth_ops: Option<wgpu::Operations<f32>>,
+    pub stencil_ops: Option<wgpu::Operations<u32>>,
+}
+
+pub struct RenderTarget {
+    pub color_attachments: SmallVec<[ColorAttachment; 1]>,
+    pub depth_stencil_attachment: Option<DepthStencilAttachment>,
+}
+
+pub struct RenderPass {
+    pub render_target: RenderTarget,
+    // pub timestamp_writes: Option<RenderPassTimestampWrites<'a>>,
+    // pub occlusion_query_set: Option<&'a QuerySet>,
+    pub multiview_mask: Option<NonZeroU32>,
+    pub draw_calls: Vec<DrawCall>,
+    pub execution: Option<Box<dyn FnMut()>>,
+}
 
 ////////////////////////////////////////
 
