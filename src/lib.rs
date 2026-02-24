@@ -2,7 +2,6 @@ pub mod camera;
 pub mod transform;
 pub mod utils;
 
-use crate::utils::InstanceCounter;
 pub use camera::Camera;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -82,8 +81,8 @@ impl Context {
 #[derive(Debug)]
 pub struct Renderer {
     context: Context,
-    bind_group_storage: RcSortedVecWrapper<wgpu::BindGroup>,
-    render_pipeline_storage: RcSortedVecWrapper<wgpu::RenderPipeline>,
+    bind_group_storage: RcSortedVec<wgpu::BindGroup>,
+    render_pipeline_storage: RcSortedVec<wgpu::RenderPipeline>,
     shader_cache: FxHashMap<Cow<'static, str>, wgpu::ShaderModule>,
     bind_group_layout_cache: Vec<(Vec<wgpu::BindGroupLayoutEntry>, wgpu::BindGroupLayout)>,
     pub surface: Option<wgpu::Surface<'static>>,
@@ -97,8 +96,8 @@ impl Renderer {
     pub fn new() -> Self {
         Self {
             context: Context::new(),
-            bind_group_storage: RcSortedVecWrapper::new(),
-            render_pipeline_storage: RcSortedVecWrapper::new(),
+            bind_group_storage: RcSortedVec::new(),
+            render_pipeline_storage: RcSortedVec::new(),
             shader_cache: FxHashMap::default(),
             bind_group_layout_cache: Vec::new(),
             surface: None,
@@ -231,13 +230,7 @@ impl Renderer {
         };
 
         let render_pipeline = self.context.device.create_render_pipeline(&desc);
-        let id = self.render_pipeline_storage.create(render_pipeline);
-
-        Handle {
-            id,
-            counter: InstanceCounter::new(),
-            storage: self.render_pipeline_storage.clone(),
-        }
+        self.render_pipeline_storage.insert(render_pipeline)
     }
 
     pub fn create_bindgroup(
@@ -268,13 +261,7 @@ impl Renderer {
             entries,
         });
 
-        let id = self.bind_group_storage.create(bind_group);
-
-        Handle {
-            id,
-            counter: InstanceCounter::new(),
-            storage: self.bind_group_storage.clone(),
-        }
+        self.bind_group_storage.insert(bind_group)
     }
 
     pub fn render(&self, render_passes: &mut [&mut RenderPass]) {
@@ -294,7 +281,7 @@ impl Renderer {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DrawCall {
     pub geometry: Geometry,
     pub shader_data: ShaderData,
@@ -302,7 +289,7 @@ pub struct DrawCall {
     pub render_pipeline_handle: Handle<wgpu::RenderPipeline>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Geometry {
     pub index_buffer: Option<wgpu::Buffer>,
     pub index_format: wgpu::IndexFormat,
@@ -389,8 +376,8 @@ impl RenderPass {
     fn render(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        pipeline_storage: &RcSortedVec<wgpu::RenderPipeline>,
-        bind_group_storage: &RcSortedVec<wgpu::BindGroup>,
+        pipeline_storage: &RcSortedVecInner<wgpu::RenderPipeline>,
+        bind_group_storage: &RcSortedVecInner<wgpu::BindGroup>,
     ) {
         let color_attachments: SmallVec<[_; 1]> = self
             .render_target
@@ -448,16 +435,16 @@ pub trait RenderPassExecutor: Debug {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         render_pass_descriptor: &wgpu::RenderPassDescriptor,
-        pipeline_storage: &RcSortedVec<wgpu::RenderPipeline>,
-        bind_group_storage: &RcSortedVec<wgpu::BindGroup>,
+        pipeline_storage: &RcSortedVecInner<wgpu::RenderPipeline>,
+        bind_group_storage: &RcSortedVecInner<wgpu::BindGroup>,
     );
 }
 
 pub fn execute_ordered_draw_calls(
     render_pass: &mut wgpu::RenderPass,
     draw_calls: &mut [DrawCall],
-    pipeline_storage: &RcSortedVec<wgpu::RenderPipeline>,
-    bind_group_storage: &RcSortedVec<wgpu::BindGroup>,
+    pipeline_storage: &RcSortedVecInner<wgpu::RenderPipeline>,
+    bind_group_storage: &RcSortedVecInner<wgpu::BindGroup>,
 ) {
     // Sort draw calls to minimize state changes: Pipeline -> BindGroups
     draw_calls.sort_by(|a, b| {
@@ -553,12 +540,12 @@ impl<T> Ord for Entry<T> {
 }
 
 #[derive(Debug)]
-pub struct RcSortedVec<T> {
+pub struct RcSortedVecInner<T> {
     data: SortedVec<Entry<T>>,
     id_pool: utils::IdPool,
 }
 
-impl<T> RcSortedVec<T> {
+impl<T> RcSortedVecInner<T> {
     pub fn new() -> Self {
         Self {
             data: SortedVec::new(),
@@ -581,7 +568,7 @@ impl<T> RcSortedVec<T> {
         id
     }
 
-    pub fn delete(&mut self, id: utils::InstanceId) {
+    fn delete(&mut self, id: utils::InstanceId) {
         self.id_pool.free(id);
         let index =
             self.data.binary_search_by_key(&id, |item| item.id).expect("Value is not present");
@@ -590,19 +577,24 @@ impl<T> RcSortedVec<T> {
 }
 
 #[derive(Debug)]
-struct RcSortedVecWrapper<T> {
-    inner: Rc<RefCell<RcSortedVec<T>>>,
+pub struct RcSortedVec<T> {
+    inner: Rc<RefCell<RcSortedVecInner<T>>>,
 }
 
-impl<T> RcSortedVecWrapper<T> {
-    fn new() -> Self {
+impl<T> RcSortedVec<T> {
+    pub fn new() -> Self {
         Self {
-            inner: Rc::new(RefCell::new(RcSortedVec::new())),
+            inner: Rc::new(RefCell::new(RcSortedVecInner::new())),
         }
     }
 
-    fn create(&self, val: T) -> utils::InstanceId {
-        self.inner.borrow_mut().insert(val)
+    pub fn insert(&self, val: T) -> Handle<T> {
+        let id = self.inner.borrow_mut().insert(val);
+        Handle {
+            id,
+            counter: utils::InstanceCounter::new(),
+            storage: self.clone(),
+        }
     }
 
     fn delete(&self, id: utils::InstanceId) {
@@ -610,7 +602,7 @@ impl<T> RcSortedVecWrapper<T> {
     }
 }
 
-impl<T> Clone for RcSortedVecWrapper<T> {
+impl<T> Clone for RcSortedVec<T> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -622,7 +614,7 @@ impl<T> Clone for RcSortedVecWrapper<T> {
 pub struct Handle<T> {
     id: utils::InstanceId,
     counter: utils::InstanceCounter,
-    storage: RcSortedVecWrapper<T>,
+    storage: RcSortedVec<T>,
 }
 
 // impl Handle<wgpu::RenderPipeline> {
@@ -662,15 +654,21 @@ impl<T> Drop for Handle<T> {
 }
 
 impl Handle<ImmediateRegion> {
-    pub fn upload(data: &[u8]) {}
+    pub fn upload(_data: &[u8]) {}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ImmediateRegion(Range<usize>);
 
-struct ImmediateBuffer {
-    storage: RcSortedVecWrapper<Entry<ImmediateRegion>>,
+#[derive(Debug)]
+struct ImmediateBufferInner {
+    storage: SortedVec<Entry<ImmediateRegion>>,
     buffer: Vec<u8>,
 }
 
-impl ImmediateBuffer {}
+impl ImmediateBufferInner {}
+
+#[derive(Debug, Clone)]
+struct ImmediateBuffer {
+    inner: Rc<RefCell<ImmediateBufferInner>>,
+}
