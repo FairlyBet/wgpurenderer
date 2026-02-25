@@ -6,7 +6,10 @@ pub use camera::Camera;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use sorted_vec::SortedVec;
-use std::{borrow::Cow, cell::RefCell, fmt::Debug, num::NonZeroU32, ops::Range, rc::Rc};
+use std::{
+    borrow::Cow, cell::RefCell, fmt::Debug, marker::PhantomData, num::NonZeroU32, ops::Range,
+    rc::Rc,
+};
 use transform::Transform;
 use wgpu::{DeviceDescriptor, ExperimentalFeatures, Features, Limits};
 
@@ -592,8 +595,7 @@ impl<T> RcSortedVec<T> {
         let id = self.inner.borrow_mut().insert(val);
         Handle {
             id,
-            counter: utils::InstanceCounter::new(),
-            storage: self.clone(),
+            _pd: PhantomData,
         }
     }
 
@@ -610,11 +612,10 @@ impl<T> Clone for RcSortedVec<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Handle<T> {
     id: utils::InstanceId,
-    counter: utils::InstanceCounter,
-    storage: RcSortedVec<T>,
+    _pd: PhantomData<T>,
 }
 
 // impl Handle<wgpu::RenderPipeline> {
@@ -625,33 +626,33 @@ pub struct Handle<T> {
 //     }
 // }
 
-impl<T> PartialEq for Handle<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
+// impl<T> PartialEq for Handle<T> {
+//     fn eq(&self, other: &Self) -> bool {
+//         self.id == other.id
+//     }
+// }
 
-impl<T> Eq for Handle<T> {}
+// impl<T> Eq for Handle<T> {}
 
-impl<T> Clone for Handle<T> {
-    fn clone(&self) -> Self {
-        self.counter.increment();
-        Self {
-            id: self.id,
-            counter: self.counter.clone(),
-            storage: self.storage.clone(),
-        }
-    }
-}
+// impl<T> Clone for Handle<T> {
+//     fn clone(&self) -> Self {
+//         self.counter.increment();
+//         Self {
+//             id: self.id,
+//             counter: self.counter.clone(),
+//             storage: self.storage.clone(),
+//         }
+//     }
+// }
 
-impl<T> Drop for Handle<T> {
-    fn drop(&mut self) {
-        self.counter.decrement();
-        if self.counter.value() == 0 {
-            self.storage.delete(self.id);
-        }
-    }
-}
+// impl<T> Drop for Handle<T> {
+//     fn drop(&mut self) {
+//         self.counter.decrement();
+//         if self.counter.value() == 0 {
+//             self.storage.delete(self.id);
+//         }
+//     }
+// }
 
 impl Handle<ImmediateRegion> {
     pub fn upload(_data: &[u8]) {}
