@@ -168,7 +168,7 @@ struct State {
     depth_texture: wgpu::Texture,
     sample_count: u32,
     uniform_buffer: wgpu::Buffer,
-    render_pass: wgpurenderer::RenderPass,
+    render_pass: wgpurenderer::renderpass::RenderPass,
     rotation: f32,
     start_time: std::time::Instant,
 }
@@ -297,7 +297,7 @@ impl State {
         let msaa_view = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let render_pass = wgpurenderer::RenderPass {
+        let render_pass = wgpurenderer::renderpass::RenderPass {
             render_target: wgpurenderer::RenderTarget {
                 color_attachments: smallvec::smallvec![wgpurenderer::ColorAttachment {
                     view: msaa_view,

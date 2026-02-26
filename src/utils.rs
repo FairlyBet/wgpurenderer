@@ -27,11 +27,15 @@ impl InstanceCounter {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InstanceId(u32);
+pub struct InstanceId(u32); // Replace with NonZeroU32
 
 impl InstanceId {
     pub fn new(val: u32) -> Self {
         Self(val)
+    }
+
+    pub fn as_usize(&self) -> usize {
+        self.0 as usize
     }
 }
 
