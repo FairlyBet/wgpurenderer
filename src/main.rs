@@ -265,9 +265,9 @@ impl State {
         );
 
         let geometry = wgpurenderer::Geometry {
-            index_buffer: Some(index_buffer),
+            index_buffer: Some((index_buffer, 0..(index_buffer.size() as u32))),
             index_format: wgpu::IndexFormat::Uint16,
-            buffers: vec![(vertex_buffer, None)],
+            buffers: smallvec::smallvec![(vertex_buffer, None)],
             count: num_indices,
         };
 

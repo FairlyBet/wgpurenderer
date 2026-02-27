@@ -337,7 +337,8 @@ pub struct DrawCall {
 
 #[derive(Debug, Clone)]
 pub struct Geometry {
-    pub index_buffer: Option<(wgpu::Buffer, Range<u32>)>,
+    pub index_buffer: Option<wgpu::Buffer>,
+    pub index_buffer_range: Option<Range<u32>>,
     pub index_format: wgpu::IndexFormat,
     pub buffers: SmallVec<[(wgpu::Buffer, Option<Range<u32>>); 3]>,
     pub count: u32,
@@ -346,7 +347,7 @@ pub struct Geometry {
 #[derive(Debug, Clone)]
 pub struct ShaderData {
     pub immediates: Vec<u8>,
-    pub bind_groups: SmallVec<[Handle<wgpu::BindGroup>; 3]>,
+    pub bind_groups: SmallVec<[wgpu::BindGroup; 3]>,
 }
 
 #[derive(Debug, Clone)]
