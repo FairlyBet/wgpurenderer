@@ -254,7 +254,7 @@ impl State {
             source: Cow::Borrowed(include_str!("../shaders/shader.wgsl")),
         };
 
-        let pipeline_handle = renderer.create_material(&material);
+        let pipeline_handle = renderer.create_render_pipeline(&material);
 
         let bindgroup_handle = renderer.create_bindgroup(
             &bind_group_layout,
@@ -264,10 +264,12 @@ impl State {
             }],
         );
 
+        let index_buffer_size = index_buffer.size() as u32;
         let geometry = wgpurenderer::Geometry {
-            index_buffer: Some((index_buffer, 0..(index_buffer.size() as u32))),
+            index_buffer: Some(index_buffer),
+            index_buffer_range: Some(0..index_buffer_size),
             index_format: wgpu::IndexFormat::Uint16,
-            buffers: smallvec::smallvec![(vertex_buffer, None)],
+            buffers: vec![(vertex_buffer, None)],
             count: num_indices,
         };
 

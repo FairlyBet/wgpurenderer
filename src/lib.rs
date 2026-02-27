@@ -87,8 +87,6 @@ impl Context {
 #[derive(Debug)]
 pub struct Renderer {
     context: Context,
-    bind_group_storage: RcSortedVec<wgpu::BindGroup>,
-    render_pipeline_storage: RcSortedVec<wgpu::RenderPipeline>,
     shader_cache: FxHashMap<Cow<'static, str>, wgpu::ShaderModule>,
     bind_group_layout_cache: Vec<(Vec<wgpu::BindGroupLayoutEntry>, wgpu::BindGroupLayout)>,
     pub surface: Option<wgpu::Surface<'static>>,
@@ -102,8 +100,6 @@ impl Renderer {
     pub fn new() -> Self {
         Self {
             context: Context::new(),
-            bind_group_storage: RcSortedVec::new(),
-            render_pipeline_storage: RcSortedVec::new(),
             shader_cache: FxHashMap::default(),
             bind_group_layout_cache: Vec::new(),
             surface: None,
@@ -173,7 +169,7 @@ impl Renderer {
         }
     }
 
-    pub fn create_material(&mut self, material: &Material) -> Handle<wgpu::RenderPipeline> {
+    pub fn create_render_pipeline(&mut self, material: &Material) -> wgpu::RenderPipeline {
         for item in &material.bind_groups {
             let found = self.bind_group_layout_cache.iter().find(|(entries, _)| *entries == *item);
 
@@ -236,14 +232,14 @@ impl Renderer {
         };
 
         let render_pipeline = self.context.device.create_render_pipeline(&desc);
-        self.render_pipeline_storage.insert(render_pipeline)
+        render_pipeline
     }
 
     pub fn create_bindgroup(
         &mut self,
         layout_entries: &[wgpu::BindGroupLayoutEntry],
         entries: &[wgpu::BindGroupEntry],
-    ) -> Handle<wgpu::BindGroup> {
+    ) -> wgpu::BindGroup {
         let found = self
             .bind_group_layout_cache
             .iter()
@@ -267,7 +263,7 @@ impl Renderer {
             entries,
         });
 
-        self.bind_group_storage.insert(bind_group)
+        bind_group
     }
 
     pub fn render(&self, render_passes: &mut [&mut RenderPass]) {
@@ -276,11 +272,8 @@ impl Renderer {
                 label: None,
             });
 
-        let pipeline_storage = self.render_pipeline_storage.inner.borrow();
-        let bind_group_storage = self.bind_group_storage.inner.borrow();
-
         for render_pass in render_passes.iter_mut() {
-            render_pass.render(&mut encoder, &pipeline_storage, &bind_group_storage);
+            render_pass.render(&mut encoder);
         }
 
         self.context.queue().submit(Some(encoder.finish()));
@@ -332,7 +325,7 @@ pub struct DrawCall {
     pub geometry: Geometry,
     pub shader_data: ShaderData,
     pub instance_count: NonZeroU32,
-    pub render_pipeline_handle: Handle<wgpu::RenderPipeline>,
+    pub render_pipeline_handle: wgpu::RenderPipeline,
 }
 
 #[derive(Debug, Clone)]
@@ -340,7 +333,7 @@ pub struct Geometry {
     pub index_buffer: Option<wgpu::Buffer>,
     pub index_buffer_range: Option<Range<u32>>,
     pub index_format: wgpu::IndexFormat,
-    pub buffers: SmallVec<[(wgpu::Buffer, Option<Range<u32>>); 3]>,
+    pub buffers: Vec<(wgpu::Buffer, Option<Range<u32>>)>,
     pub count: u32,
 }
 
