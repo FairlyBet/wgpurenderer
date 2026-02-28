@@ -3,18 +3,13 @@ pub mod renderpass;
 pub mod transform;
 pub mod utils;
 
+use crate::renderpass::RenderPass;
 pub use camera::Camera;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use sorted_vec::SortedVec;
-use std::{
-    borrow::Cow, cell::RefCell, fmt::Debug, marker::PhantomData, num::NonZeroU32, ops::Range,
-    rc::Rc,
-};
+use std::{borrow::Cow, cell::RefCell, fmt::Debug, num::NonZeroU32, ops::Range, rc::Rc};
 use transform::Transform;
 use wgpu::{DeviceDescriptor, ExperimentalFeatures, Features, Limits};
-
-use crate::{renderpass::RenderPass, utils::TypeId};
 
 pub struct Scene {
     nodes: Vec<Node>,
@@ -89,6 +84,7 @@ pub struct Renderer {
     context: Context,
     shader_cache: FxHashMap<Cow<'static, str>, wgpu::ShaderModule>,
     bind_group_layout_cache: Vec<(Vec<wgpu::BindGroupLayoutEntry>, wgpu::BindGroupLayout)>,
+    immeadiate_manager: Rc<RefCell<ImmediateManager>>,
     pub surface: Option<wgpu::Surface<'static>>,
     pub config: Option<wgpu::SurfaceConfiguration>,
     pub surface_texture: Option<wgpu::SurfaceTexture>,
@@ -102,6 +98,7 @@ impl Renderer {
             context: Context::new(),
             shader_cache: FxHashMap::default(),
             bind_group_layout_cache: Vec::new(),
+            immeadiate_manager: Rc::new(RefCell::new(ImmediateManager::new())),
             surface: None,
             config: None,
             surface_texture: None,
@@ -266,14 +263,24 @@ impl Renderer {
         bind_group
     }
 
+    pub fn create_immediate(&self, size: usize) -> Immediate {
+        let id = self.immeadiate_manager.borrow_mut().allocate(size);
+
+        Immediate {
+            id,
+            counter: utils::InstanceCounter::new(),
+            manager: self.immeadiate_manager.clone(),
+        }
+    }
+
     pub fn render(&self, render_passes: &mut [&mut RenderPass]) {
         let mut encoder =
             self.context.device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: None,
             });
-
+        let immediate_manager = self.immeadiate_manager.borrow();
         for render_pass in render_passes.iter_mut() {
-            render_pass.render(&mut encoder);
+            render_pass.render(&mut encoder, &immediate_manager);
         }
 
         self.context.queue().submit(Some(encoder.finish()));
@@ -339,7 +346,7 @@ pub struct Geometry {
 
 #[derive(Debug, Clone)]
 pub struct ShaderData {
-    pub immediates: Vec<u8>,
+    pub immediates: Option<Immediate>,
     pub bind_groups: SmallVec<[wgpu::BindGroup; 3]>,
 }
 
@@ -367,38 +374,12 @@ pub struct RenderTarget {
 ////////////////////////////////////////
 
 #[derive(Debug)]
-struct Entry<T> {
-    val: T,
-    id: utils::InstanceId,
-}
-
-impl<T> PartialEq for Entry<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl<T> Eq for Entry<T> {}
-
-impl<T> PartialOrd for Entry<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.id.partial_cmp(&other.id)
-    }
-}
-
-impl<T> Ord for Entry<T> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.id.cmp(&other.id)
-    }
-}
-
-/// Handles memory used for storing immeadiates
-/// Returns handle with id which is used to index `entries` and find memory region that corresponds to the handle
-#[derive(Debug)]
 pub struct ImmediateManager {
     entries: Vec<Option<Range<usize>>>,
     id_pool: utils::IdPool,
     bytes: Vec<u8>,
+    is_compact: bool,
+    top_pos: usize,
 }
 
 impl ImmediateManager {
@@ -407,35 +388,47 @@ impl ImmediateManager {
             id_pool: utils::IdPool::new(),
             entries: vec![],
             bytes: vec![],
+            is_compact: true,
+            top_pos: 0,
         }
     }
 
-    pub fn add(&mut self, size: usize) -> utils::InstanceId {
-        let mut occupied: Vec<Range<usize>> = self.entries.iter().flatten().cloned().collect();
-        occupied.sort_by_key(|r| r.start);
-
-        let mut start_pos = 0;
+    pub fn allocate(&mut self, size: usize) -> utils::InstanceId {
         let mut found_range = None;
 
-        for range in &occupied {
-            if range.start - start_pos >= size {
-                found_range = Some(start_pos..start_pos + size);
-                break;
-            }
-            start_pos = range.end;
-        }
-
-        if found_range.is_none() {
-            // No suitable gap found, check if there's enough space at the end.
-            if self.bytes.len() - start_pos < size {
-                // Grow the buffer with some spare space.
-                let new_size = (self.bytes.len() * 2).max(start_pos + size * 2).max(64);
-                self.bytes.resize(new_size, 0);
-            }
+        if self.is_compact {
+            let start_pos = self.top_pos;
             found_range = Some(start_pos..start_pos + size);
+            self.top_pos += size;
+        } else {
+            let mut occupied: Vec<Range<usize>> = self.entries.iter().flatten().cloned().collect();
+            occupied.sort_by_key(|r| r.start);
+
+            let mut current_pos = 0;
+            for range in &occupied {
+                if range.start - current_pos >= size {
+                    found_range = Some(current_pos..current_pos + size);
+                    break;
+                }
+                current_pos = range.end;
+            }
+
+            if found_range.is_none() {
+                let start_pos = self.top_pos;
+                found_range = Some(start_pos..start_pos + size);
+                self.top_pos += size;
+            }
         }
 
         let range = found_range.unwrap();
+
+        // Ensure buffer is large enough
+        if range.end > self.bytes.len() {
+            // Grow the buffer with some spare space.
+            let new_size = (self.bytes.len() * 2).max(range.end + size).max(64);
+            self.bytes.resize(new_size, 0);
+        }
+
         let id = self.id_pool.get_next();
         let idx = id.as_usize();
 
@@ -448,6 +441,34 @@ impl ImmediateManager {
         id
     }
 
+    pub fn defragment(&mut self) {
+        if self.is_compact {
+            return;
+        }
+
+        let mut active: Vec<(usize, Range<usize>)> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| r.as_ref().map(|r| (i, r.clone())))
+            .collect();
+
+        active.sort_by_key(|(_, r)| r.start);
+
+        let mut write_pos = 0;
+        for (idx, range) in active {
+            if range.start > write_pos {
+                self.bytes.copy_within(range.clone(), write_pos);
+            }
+            let len = range.len();
+            self.entries[idx] = Some(write_pos..write_pos + len);
+            write_pos += len;
+        }
+
+        self.top_pos = write_pos;
+        self.is_compact = true;
+    }
+
     pub fn get(&self, id: utils::InstanceId) -> Option<&[u8]> {
         self.entries.get(id.as_usize())?.as_ref().map(|range| &self.bytes[range.clone()])
     }
@@ -458,9 +479,84 @@ impl ImmediateManager {
 
     pub fn remove(&mut self, id: utils::InstanceId) {
         if let Some(entry) = self.entries.get_mut(id.as_usize()) {
-            if entry.take().is_some() {
+            if let Some(range) = entry.take() {
+                if range.end == self.top_pos {
+                    self.top_pos = range.start;
+                } else {
+                    self.is_compact = false;
+                }
+
+                if self.top_pos == 0 {
+                    self.is_compact = true;
+                }
+
                 self.id_pool.free(id);
             }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Immediate {
+    id: utils::InstanceId,
+    counter: utils::InstanceCounter,
+    manager: Rc<RefCell<ImmediateManager>>,
+}
+
+impl Immediate {
+    pub fn write(&mut self, offset: usize, data: &[u8]) {
+        let mut manager = self.manager.borrow_mut();
+        let slice = match manager.get_mut(self.id) {
+            Some(s) => s,
+            None => cold_panic("Immediate buffer invalid ID"),
+        };
+
+        if offset + data.len() > slice.len() {
+            cold_panic("Immediate buffer access out of bounds");
+        }
+
+        slice[offset..offset + data.len()].copy_from_slice(data);
+    }
+
+    pub fn read<const S: usize>(&self, offset: usize) -> [u8; S] {
+        let manager = self.manager.borrow();
+        let slice = match manager.get(self.id) {
+            Some(s) => s,
+            None => cold_panic("Immediate buffer invalid ID"),
+        };
+
+        if offset + S > slice.len() {
+            cold_panic("Immediate buffer access out of bounds");
+        }
+
+        let mut result = [0u8; S];
+        result.copy_from_slice(&slice[offset..offset + S]);
+        result
+    }
+}
+
+#[inline(never)]
+#[cold]
+fn cold_panic(msg: &str) -> ! {
+    panic!("{msg}");
+}
+
+impl Clone for Immediate {
+    fn clone(&self) -> Self {
+        self.counter.increment();
+        Self {
+            id: self.id,
+            counter: self.counter.clone(),
+            manager: self.manager.clone(),
+        }
+    }
+}
+
+impl Drop for Immediate {
+    fn drop(&mut self) {
+        self.counter.decrement();
+        if self.counter.value() == 0 {
+            self.manager.borrow_mut().remove(self.id);
         }
     }
 }

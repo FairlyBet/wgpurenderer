@@ -1,4 +1,4 @@
-use crate::{DrawCall, RenderTarget};
+use crate::{DrawCall, ImmediateManager, RenderTarget};
 use smallvec::SmallVec;
 use std::{fmt::Debug, num::NonZeroU32};
 
@@ -13,7 +13,11 @@ pub struct RenderPass {
 }
 
 impl RenderPass {
-    pub fn render(&mut self, encoder: &mut wgpu::CommandEncoder) {
+    pub fn render(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        immediate_manager: &ImmediateManager,
+    ) {
         let color_attachments: SmallVec<[_; 1]> = self
             .render_target
             .color_attachments
@@ -50,7 +54,7 @@ impl RenderPass {
             executor.execute(encoder, &render_pass_descriptor);
         } else {
             let mut render_pass = encoder.begin_render_pass(&render_pass_descriptor);
-            execute_ordered_draw_calls(&mut render_pass, &mut self.draw_calls);
+            execute_ordered_draw_calls(&mut render_pass, &mut self.draw_calls, immediate_manager);
         }
     }
 }
@@ -63,7 +67,11 @@ pub trait RenderPassExecutor: Debug {
     );
 }
 
-pub fn execute_ordered_draw_calls(render_pass: &mut wgpu::RenderPass, draw_calls: &mut [DrawCall]) {
+pub fn execute_ordered_draw_calls(
+    render_pass: &mut wgpu::RenderPass,
+    draw_calls: &mut [DrawCall],
+    immediate_manager: &ImmediateManager,
+) {
     // Sort draw calls to minimize state changes: Pipeline -> BindGroups
     draw_calls.sort_by(|a, b| match a.render_pipeline_handle.cmp(&b.render_pipeline_handle) {
         std::cmp::Ordering::Equal => {
@@ -104,8 +112,10 @@ pub fn execute_ordered_draw_calls(render_pass: &mut wgpu::RenderPass, draw_calls
             render_pass.set_vertex_buffer(i as u32, buffer.slice(r));
         }
 
-        if !draw_call.shader_data.immediates.is_empty() {
-            render_pass.set_immediates(0, &draw_call.shader_data.immediates);
+        if let Some(immediate) = &draw_call.shader_data.immediates {
+            if let Some(bytes) = immediate_manager.get(immediate.id) {
+                render_pass.set_immediates(0, bytes);
+            }
         }
 
         if let Some(index_buffer) = &draw_call.geometry.index_buffer {

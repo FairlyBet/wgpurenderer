@@ -274,7 +274,7 @@ impl State {
         };
 
         let shader_data = wgpurenderer::ShaderData {
-            immediates: Vec::new(),
+            immediates: None,
             bind_groups: smallvec::smallvec![bindgroup_handle],
         };
 
