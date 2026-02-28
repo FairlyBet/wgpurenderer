@@ -392,142 +392,75 @@ impl<T> Ord for Entry<T> {
     }
 }
 
+/// Handles memory used for storing immeadiates
+/// Returns handle with id which is used to index `entries` and find memory region that corresponds to the handle
 #[derive(Debug)]
-pub struct ResourcePool<T> {
-    data: Vec<Option<T>>,
-    id_pool: utils::IdPool,
-}
-
-impl<T> ResourcePool<T> {
-    pub fn new() -> Self {
-        Self {
-            data: Vec::new(),
-            id_pool: utils::IdPool::new(),
-        }
-    }
-
-    pub fn get(&self, id: utils::InstanceId) -> Option<&T> {
-        self.data.get(id.as_usize()).and_then(|opt| opt.as_ref())
-    }
-
-    pub fn insert(&mut self, val: T) -> utils::InstanceId {
-        let id = self.id_pool.get_next();
-        let index = id.as_usize();
-        if index >= self.data.len() {
-            self.data.resize_with(index + 1, || None);
-        }
-        self.data[index] = Some(val);
-        id
-    }
-
-    fn delete(&mut self, id: utils::InstanceId) {
-        self.id_pool.free(id);
-        if let Some(item) = self.data.get_mut(id.as_usize()) {
-            *item = None;
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct RcSortedVec<T> {
-    inner: Rc<RefCell<ResourcePool<T>>>,
-}
-
-impl<T> RcSortedVec<T> {
-    pub fn new() -> Self {
-        Self {
-            inner: Rc::new(RefCell::new(ResourcePool::new())),
-        }
-    }
-
-    pub fn insert(&self, val: T) -> Handle<T> {
-        let id = self.inner.borrow_mut().insert(val);
-        Handle {
-            id,
-            _pd: PhantomData,
-        }
-    }
-
-    fn delete(&self, id: utils::InstanceId) {
-        self.inner.borrow_mut().delete(id);
-    }
-}
-
-impl<T> Clone for RcSortedVec<T> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Handle<T> {
-    id: utils::InstanceId,
-    _pd: PhantomData<T>,
-}
-
-// impl Handle<wgpu::RenderPipeline> {
-//     pub fn get_bind_group_layout(&self, index: u32) -> wgpu::BindGroupLayout {
-//         let storage = self.storage.inner.borrow();
-//         let item = storage.data.binary_search_by(|item| item.id.cmp(&self.id)).unwrap();
-//         storage.data[item].val.get_bind_group_layout(index)
-//     }
-// }
-
-// impl<T> PartialEq for Handle<T> {
-//     fn eq(&self, other: &Self) -> bool {
-//         self.id == other.id
-//     }
-// }
-
-// impl<T> Eq for Handle<T> {}
-
-// impl<T> Clone for Handle<T> {
-//     fn clone(&self) -> Self {
-//         self.counter.increment();
-//         Self {
-//             id: self.id,
-//             counter: self.counter.clone(),
-//             storage: self.storage.clone(),
-//         }
-//     }
-// }
-
-// impl<T> Drop for Handle<T> {
-//     fn drop(&mut self) {
-//         self.counter.decrement();
-//         if self.counter.value() == 0 {
-//             self.storage.delete(self.id);
-//         }
-//     }
-// }
-
-impl Handle<ImmediateRegion> {
-    pub fn upload(_data: &[u8]) {}
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ImmediateRegion(Range<usize>);
-
-#[derive(Debug)]
-struct ImmediateBufferInner {
-    storage: SortedVec<Entry<ImmediateRegion>>,
-    buffer: Vec<u8>,
-}
-
-impl ImmediateBufferInner {}
-
-#[derive(Debug, Clone)]
-struct ImmediateBuffer {
-    inner: Rc<RefCell<ImmediateBufferInner>>,
-}
-
 pub struct ImmediateManager {
-    data: Vec<u8>,
-    occupied_segments: Vec<Range<usize>>,
+    entries: Vec<Option<Range<usize>>>,
+    id_pool: utils::IdPool,
+    bytes: Vec<u8>,
 }
 
 impl ImmediateManager {
-    pub fn create_immeadiate(size: usize) {}
+    pub fn new() -> Self {
+        Self {
+            id_pool: utils::IdPool::new(),
+            entries: vec![],
+            bytes: vec![],
+        }
+    }
+
+    pub fn add(&mut self, size: usize) -> utils::InstanceId {
+        let mut occupied: Vec<Range<usize>> = self.entries.iter().flatten().cloned().collect();
+        occupied.sort_by_key(|r| r.start);
+
+        let mut start_pos = 0;
+        let mut found_range = None;
+
+        for range in &occupied {
+            if range.start - start_pos >= size {
+                found_range = Some(start_pos..start_pos + size);
+                break;
+            }
+            start_pos = range.end;
+        }
+
+        if found_range.is_none() {
+            // No suitable gap found, check if there's enough space at the end.
+            if self.bytes.len() - start_pos < size {
+                // Grow the buffer with some spare space.
+                let new_size = (self.bytes.len() * 2).max(start_pos + size * 2).max(64);
+                self.bytes.resize(new_size, 0);
+            }
+            found_range = Some(start_pos..start_pos + size);
+        }
+
+        let range = found_range.unwrap();
+        let id = self.id_pool.get_next();
+        let idx = id.as_usize();
+
+        if idx >= self.entries.len() {
+            let new_len = (self.entries.len() * 2).max(idx + 1).max(8);
+            self.entries.resize(new_len, None);
+        }
+
+        self.entries[idx] = Some(range);
+        id
+    }
+
+    pub fn get(&self, id: utils::InstanceId) -> Option<&[u8]> {
+        self.entries.get(id.as_usize())?.as_ref().map(|range| &self.bytes[range.clone()])
+    }
+
+    pub fn get_mut(&mut self, id: utils::InstanceId) -> Option<&mut [u8]> {
+        self.entries.get(id.as_usize())?.as_ref().map(|range| &mut self.bytes[range.clone()])
+    }
+
+    pub fn remove(&mut self, id: utils::InstanceId) {
+        if let Some(entry) = self.entries.get_mut(id.as_usize()) {
+            if entry.take().is_some() {
+                self.id_pool.free(id);
+            }
+        }
+    }
 }
