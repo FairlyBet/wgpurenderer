@@ -14,7 +14,7 @@ use std::{
 use transform::Transform;
 use wgpu::{DeviceDescriptor, ExperimentalFeatures, Features, Limits};
 
-use crate::renderpass::RenderPass;
+use crate::{renderpass::RenderPass, utils::TypeId};
 
 pub struct Scene {
     nodes: Vec<Node>,
@@ -521,4 +521,13 @@ impl ImmediateBufferInner {}
 #[derive(Debug, Clone)]
 struct ImmediateBuffer {
     inner: Rc<RefCell<ImmediateBufferInner>>,
+}
+
+pub struct ImmediateManager {
+    data: Vec<u8>,
+    occupied_segments: Vec<Range<usize>>,
+}
+
+impl ImmediateManager {
+    pub fn create_immeadiate(size: usize) {}
 }

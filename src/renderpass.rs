@@ -100,9 +100,8 @@ pub fn execute_ordered_draw_calls(render_pass: &mut wgpu::RenderPass, draw_calls
 
         // 3. Set vertex/index buffers
         for (i, (buffer, range)) in draw_call.geometry.buffers.iter().enumerate() {
-            let start = range.as_ref().map_or(0, |r| r.start as u64);
-            let end = range.as_ref().map_or(buffer.size(), |r| r.end as u64);
-            render_pass.set_vertex_buffer(i as u32, buffer.slice(start..end));
+            let r = range.as_ref().map_or(0..buffer.size(), |r| (r.start as u64)..(r.end as u64));
+            render_pass.set_vertex_buffer(i as u32, buffer.slice(r));
         }
 
         if !draw_call.shader_data.immediates.is_empty() {
@@ -110,7 +109,13 @@ pub fn execute_ordered_draw_calls(render_pass: &mut wgpu::RenderPass, draw_calls
         }
 
         if let Some(index_buffer) = &draw_call.geometry.index_buffer {
-            render_pass.set_index_buffer(index_buffer.slice(..), draw_call.geometry.index_format);
+            let r = draw_call
+                .geometry
+                .index_buffer_range
+                .as_ref()
+                .map_or(0..index_buffer.size(), |r| (r.start as u64)..(r.end as u64));
+
+            render_pass.set_index_buffer(index_buffer.slice(r), draw_call.geometry.index_format);
             render_pass.draw_indexed(
                 0..draw_call.geometry.count,
                 0,
