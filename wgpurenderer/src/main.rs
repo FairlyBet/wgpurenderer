@@ -4,6 +4,7 @@ use glfw::{Action, Key};
 use std::borrow::Cow;
 use std::num::NonZeroU32;
 use wgpu::util::DeviceExt;
+use wgpurenderer::{Immediate, immediate};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -33,14 +34,17 @@ impl Vertex {
     }
 }
 
+#[immediate]
+struct LightData {
+    light_color: [f32; 3],
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct Uniforms {
     model: [[f32; 4]; 4],
     view: [[f32; 4]; 4],
     projection: [[f32; 4]; 4],
-    light_color: [f32; 3],
-    _padding: f32,
 }
 
 fn create_cube_mesh() -> (Vec<Vertex>, Vec<u16>) {
@@ -426,12 +430,21 @@ impl State {
         let aspect = self.size.0 as f32 / self.size.1 as f32;
         let projection = glam::Mat4::perspective_rh(45.0_f32.to_radians(), aspect, 0.1, 100.0);
 
+        // Interpolate color: shifting through spectrum
+        let r = (elapsed * 1.0).sin() * 0.5 + 0.5;
+        let g = (elapsed * 1.3).cos() * 0.5 + 0.5;
+        let b = (elapsed * 1.7).sin() * 0.5 + 0.5;
+        let light_color = [r, g, b];
+
+        // Create and write immediate data
+        let mut light_data =
+            LightData::new(self.renderer.create_immediate(std::mem::size_of::<[f32; 3]>()), 0);
+        light_data.set_light_color(light_color);
+
         let uniforms = Uniforms {
             model: model.to_cols_array_2d(),
             view: view.to_cols_array_2d(),
             projection: projection.to_cols_array_2d(),
-            light_color: [1.0, 1.0, 0.9],
-            _padding: 0.0,
         };
 
         self.renderer.context().queue().write_buffer(
@@ -439,6 +452,9 @@ impl State {
             0,
             bytemuck::bytes_of(&uniforms),
         );
+
+        // Assign immediate back to the draw call
+        self.render_pass.draw_calls[0].shader_data.immediates = Some(light_data.immediate);
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {

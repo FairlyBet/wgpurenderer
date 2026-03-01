@@ -18,6 +18,12 @@ fn vs_main(vertex: VertexInput) -> VertexOutput {
     return out;
 }
 
+struct ImmediateData {
+    light_color: vec3<f32>,
+}
+
+var<immediate> immediate_data: ImmediateData;
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Light direction (from top-right-front)
@@ -25,37 +31,26 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Ambient lighting
     let ambient_strength = 0.3;
-    let ambient = ambient_strength * uniforms.light_color;
+    let ambient = ambient_strength * immediate_data.light_color;
 
     // Diffuse lighting
     let normal = normalize(in.normal);
     let diff = max(dot(normal, light_dir), 0.0);
-    let diffuse = diff * uniforms.light_color;
+    let diffuse = diff * immediate_data.light_color;
 
     // Object base color
     let object_color = vec3<f32>(0.8, 0.3, 0.5);
 
     // Final color
-    let result = (ambient + diffuse) * object_color * foo(light_dir);
+    let result = (ambient + diffuse) * object_color;
 
     return vec4<f32>(result, 1.0);
-}
-
-fn foo( light_dir: vec3<f32> ) -> f32 {
-    if length( light_dir ) > 0.5 {
-        return 1.0;
-    }
-    else {
-        return 0.0;
-    }
 }
 
 struct Uniforms {
     model: mat4x4<f32>,
     view: mat4x4<f32>,
     projection: mat4x4<f32>,
-    light_color: vec3<f32>,
-    _padding: f32,
 }
 
 @group(0) @binding(0)
