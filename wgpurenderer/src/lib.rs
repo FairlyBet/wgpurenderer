@@ -3,11 +3,21 @@ pub mod renderpass;
 pub mod transform;
 pub mod utils;
 
-use crate::renderpass::RenderPass;
+use crate::{renderpass::RenderPass, utils::TypeId};
 pub use camera::Camera;
+use nohash_hasher::IntMap;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use std::{borrow::Cow, cell::RefCell, fmt::Debug, num::NonZeroU32, ops::Range, rc::Rc};
+use sorted_vec::SortedVec;
+use std::{
+    borrow::Cow,
+    cell::RefCell,
+    fmt::Debug,
+    hash::{Hash, Hasher},
+    num::NonZeroU32,
+    ops::Range,
+    rc::Rc,
+};
 use transform::Transform;
 pub use wgpurenderer_macros::immediate;
 
@@ -552,5 +562,96 @@ impl Drop for Immediate {
         if self.counter.value() == 0 {
             self.manager.borrow_mut().remove(self.id);
         }
+    }
+}
+
+struct ImmeadiateIndexSsboData {
+    map: IntMap<utils::TypeId, Buffer>,
+}
+
+impl ImmeadiateIndexSsboData {
+    fn write<T: 'static + bytemuck::NoUninit>(
+        &mut self,
+        immediate: &Immediate,
+        offset: u32,
+        data: &T,
+    ) {
+        let bytes = bytemuck::bytes_of(data);
+        let entry = self.map.entry(TypeId::new::<T>()).or_insert(Buffer::new::<T>());
+        let index = entry.entries.binary_search_by_key(&immediate.id, |item| item.id);
+        let region = match index {
+            Ok(i) => entry.entries[i].region.clone(),
+            Err(_) => {
+                let start = entry.bytes.len();
+                let size = entry.type_info.size;
+                if start + size > entry.bytes.len() {
+                    let new_cap = (entry.bytes.len() * 2).max(start + size).max(64);
+                    entry.bytes.resize(new_cap, 0);
+                }
+                let region = start..start + size;
+                entry.entries.insert(Entry {
+                    id: immediate.id,
+                    region: region.clone(),
+                });
+                region
+            }
+        };
+
+        let write_start = region.start + offset as usize;
+        let write_end = write_start + bytes.len();
+
+        if write_end <= region.end {
+            entry.bytes[write_start..write_end].copy_from_slice(bytes);
+        } else {
+            utils::cold_panic("ImmeadiateIndexSsboData write out of bounds within region");
+        }
+    }
+}
+
+struct Buffer {
+    type_info: utils::TypeInfo,
+    bytes: Vec<u8>,
+    entries: SortedVec<Entry>,
+}
+
+impl Buffer {
+    fn new<T: 'static>() -> Self {
+        Self {
+            type_info: utils::TypeInfo::new::<T>(),
+            bytes: vec![],
+            entries: sorted_vec::SortedVec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Entry {
+    id: utils::InstanceId,
+    region: Range<usize>,
+}
+
+impl PartialEq for Entry {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Entry {}
+
+impl PartialOrd for Entry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.id.partial_cmp(&other.id)
+    }
+}
+
+impl Ord for Entry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
+impl Hash for Entry {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
     }
 }
