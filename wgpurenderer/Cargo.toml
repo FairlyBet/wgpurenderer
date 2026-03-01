@@ -1,0 +1,18 @@
+[package]
+name = "wgpurenderer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wgpu = { workspace = true }
+glfw = { workspace = true }
+pollster = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+glam = { workspace = true }
+bytemuck = { workspace = true }
+smallvec = { workspace = true }
+sorted-vec = { workspace = true }
+nohash-hasher = { workspace = true }
+rustc-hash = { workspace = true }
+wgpurenderer-macros = { workspace = true }

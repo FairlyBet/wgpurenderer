@@ -1,9 +1,9 @@
-[package]
-name = "wgpurenderer"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = ["wgpurenderer", "wgpurenderer-macros"]
+resolver = "3"
 
-[dependencies]
+[workspace.dependencies]
+wgpurenderer-macros = { path = "./wgpurenderer-macros" }
 wgpu = { version = "28.0.0", default-features = false, features = [
     "vulkan",
     "parking_lot",
@@ -20,3 +20,6 @@ smallvec = { version = "1.15.1", features = ["union"] }
 sorted-vec = "0.8.10"
 nohash-hasher = "0.2.0"
 rustc-hash = "2.1.1"
+syn = "2.0.117"
+quote = "1.0.44"
+proc-macro2 = "1.0.106"

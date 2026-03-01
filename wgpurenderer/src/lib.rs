@@ -4,12 +4,14 @@ pub mod transform;
 pub mod utils;
 
 use crate::renderpass::RenderPass;
+use bytemuck;
 pub use camera::Camera;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::{borrow::Cow, cell::RefCell, fmt::Debug, num::NonZeroU32, ops::Range, rc::Rc};
 use transform::Transform;
 use wgpu::{DeviceDescriptor, ExperimentalFeatures, Features, Limits};
+use wgpurenderer_macros::immediate;
 
 pub struct Scene {
     nodes: Vec<Node>,
