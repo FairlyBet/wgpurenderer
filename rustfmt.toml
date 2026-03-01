@@ -1,6 +1,7 @@
 edition = "2024"
 use_small_heuristics = "Off"
 max_width = 100
+newline_style = "Unix"
 
 # style_edition = "2024"
 # brace_style = "AlwaysNextLine"

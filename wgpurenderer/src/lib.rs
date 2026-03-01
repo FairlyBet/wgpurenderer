@@ -4,14 +4,12 @@ pub mod transform;
 pub mod utils;
 
 use crate::renderpass::RenderPass;
-use bytemuck;
 pub use camera::Camera;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::{borrow::Cow, cell::RefCell, fmt::Debug, num::NonZeroU32, ops::Range, rc::Rc};
 use transform::Transform;
-use wgpu::{DeviceDescriptor, ExperimentalFeatures, Features, Limits};
-use wgpurenderer_macros::immediate;
+pub use wgpurenderer_macros::immediate;
 
 pub struct Scene {
     nodes: Vec<Node>,
@@ -43,14 +41,14 @@ impl Context {
         });
         let adapter = pollster::block_on(adapter).unwrap();
 
-        let device_queue = adapter.request_device(&DeviceDescriptor {
+        let device_queue = adapter.request_device(&wgpu::DeviceDescriptor {
             label: None,
-            required_features: Features::IMMEDIATES,
-            required_limits: Limits {
+            required_features: wgpu::Features::IMMEDIATES,
+            required_limits: wgpu::Limits {
                 max_immediate_size: 128,
                 ..Default::default()
             },
-            experimental_features: ExperimentalFeatures::disabled(),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
         });
@@ -510,11 +508,11 @@ impl Immediate {
         let mut manager = self.manager.borrow_mut();
         let slice = match manager.get_mut(self.id) {
             Some(s) => s,
-            None => cold_panic("Immediate buffer invalid ID"),
+            None => utils::cold_panic("Immediate buffer invalid ID"),
         };
 
         if offset + data.len() > slice.len() {
-            cold_panic("Immediate buffer access out of bounds");
+            utils::cold_panic("Immediate buffer access out of bounds");
         }
 
         slice[offset..offset + data.len()].copy_from_slice(data);
@@ -524,23 +522,17 @@ impl Immediate {
         let manager = self.manager.borrow();
         let slice = match manager.get(self.id) {
             Some(s) => s,
-            None => cold_panic("Immediate buffer invalid ID"),
+            None => utils::cold_panic("Immediate buffer invalid ID"),
         };
 
         if offset + S > slice.len() {
-            cold_panic("Immediate buffer access out of bounds");
+            utils::cold_panic("Immediate buffer access out of bounds");
         }
 
         let mut result = [0u8; S];
         result.copy_from_slice(&slice[offset..offset + S]);
         result
     }
-}
-
-#[inline(never)]
-#[cold]
-fn cold_panic(msg: &str) -> ! {
-    panic!("{msg}");
 }
 
 impl Clone for Immediate {

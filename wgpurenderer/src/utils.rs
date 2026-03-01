@@ -117,3 +117,9 @@ impl IdPool {
         self.available.push(id);
     }
 }
+
+#[inline(never)]
+#[cold]
+pub fn cold_panic(msg: &str) -> ! {
+    panic!("{msg}");
+}

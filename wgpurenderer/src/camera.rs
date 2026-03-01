@@ -1,5 +1,5 @@
-use glam::{Mat4, Quat, Vec3};
 use crate::transform::Transform;
+use glam::{Mat4, Quat, Vec3};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Camera {

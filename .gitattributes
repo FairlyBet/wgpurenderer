@@ -1,0 +1,2 @@
+# Set default behavior to handle all files as text and use LF (Unix) line endings in the repository and during checkout.
+* text=auto eol=lf

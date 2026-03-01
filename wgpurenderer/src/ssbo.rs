@@ -106,7 +106,7 @@ impl ManagedSsbo {
             updated_range: 0..0,
             entries: SortedVec::new(),
             staging_buffer: vec![],
-            buffer: todo!()
+            buffer: todo!(),
         }
     }
 

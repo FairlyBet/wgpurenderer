@@ -4,14 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-wgpu = { workspace = true }
-glfw = { workspace = true }
+wgpu = { workspace = true, features = ["vulkan", "parking_lot", "std", "wgsl"] }
+glfw = { workspace = true, features = ["raw-window-handle-v0-6"] }
 pollster = { workspace = true }
 env_logger = { workspace = true }
 log = { workspace = true }
-glam = { workspace = true }
-bytemuck = { workspace = true }
-smallvec = { workspace = true }
+glam = { workspace = true, features = ["bytemuck"] }
+bytemuck = { workspace = true, features = ["derive"] }
+smallvec = { workspace = true, features = ["union"] }
 sorted-vec = { workspace = true }
 nohash-hasher = { workspace = true }
 rustc-hash = { workspace = true }

@@ -83,7 +83,7 @@ impl Transform {
 
     fn invalid_normal_matrix() -> Mat3 {
         let mut matrix = Mat3::ZERO;
-        matrix.x_axis.y = f32::NAN;  // NaN гарантирует что это невалидная матрица
+        matrix.x_axis.y = f32::NAN; // NaN гарантирует что это невалидная матрица
         matrix
     }
 }
